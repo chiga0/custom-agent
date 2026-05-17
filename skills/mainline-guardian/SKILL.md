@@ -21,7 +21,7 @@ The project exists to build a local-first, event-sourced agent core with strict 
 Collect:
 
 - Roadmap item or ADR id.
-- Work ID from `custom-agent-docs/docs/zh/07-roadmap-status.md`.
+- Work ID from `custom-agent-docs/docs/zh/03-roadmap-status.md`.
 - Docs commit SHA used by the implementation PR.
 - Roadmap status update.
 - Changed files.
@@ -39,7 +39,7 @@ Report a blocking finding if the change:
 
 - Does not map to a roadmap item or ADR.
 - Does not map to a Work ID for implementation work.
-- Changes implementation status but does not update `custom-agent-docs/docs/zh/07-roadmap-status.md`.
+- Changes implementation status but does not update `custom-agent-docs/docs/zh/03-roadmap-status.md`.
 - Makes `core` depend on a client, provider SDK, or MCP transport.
 - Executes a tool without `PermissionEngine`.
 - Adds runtime behavior that is not represented in the event log.

@@ -6,7 +6,7 @@
 
 - GitHub: https://github.com/chiga0/custom-agent-docs
 - 本地推荐路径：`../custom-agent-docs`
-- Roadmap 状态中心：`../custom-agent-docs/docs/zh/07-roadmap-status.md`
+- Roadmap 状态中心：`../custom-agent-docs/docs/zh/03-roadmap-status.md`
 - 仓库关系说明：`../custom-agent-docs/docs/zh/08-repository-relationship.md`
 
 ## 本仓库保留的文档职责

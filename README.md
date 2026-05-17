@@ -55,7 +55,7 @@ Planning docs live in the separate source-of-truth repository:
 
 - [custom-agent-docs](https://github.com/chiga0/custom-agent-docs)
 - Local recommended path: `../custom-agent-docs`
-- Roadmap status: `../custom-agent-docs/docs/zh/07-roadmap-status.md`
+- Roadmap status: `../custom-agent-docs/docs/zh/03-roadmap-status.md`
 - Repository relationship: `../custom-agent-docs/docs/zh/08-repository-relationship.md`
 
 This implementation repository keeps only local development notes and links to the docs source of truth.

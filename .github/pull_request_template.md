@@ -4,7 +4,7 @@
 
 - Work ID:
 - Docs commit SHA:
-- Docs status source: `custom-agent-docs/docs/zh/07-roadmap-status.md`
+- Docs status source: `custom-agent-docs/docs/zh/03-roadmap-status.md`
 - 当前状态变更：`READY` -> `IN_PROGRESS` -> `REVIEW` -> `DONE`
 - 是否需要更新 `custom-agent-docs`：
 - 如未更新，原因：
