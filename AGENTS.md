@@ -14,6 +14,8 @@ Chinese documentation in `custom-agent-docs/docs/zh` is the canonical working do
 
 When changing architecture, roadmap, CI, permissions, memory, MCP, ACP, skills, or governance rules, update `custom-agent-docs` first or in the same change sequence.
 
+`custom-agent-docs` is the centralized coordination source for active work, current technical design, roadmap status, and multi-agent process state. Docs-only updates to `custom-agent-docs` do not require a PR; push them directly so the coordination state stays current.
+
 ## Roadmap Coordination
 
 Before starting non-trivial work, read `../custom-agent-docs/docs/zh/03-roadmap-status.md`. It is the centralized roadmap status source for parallel agent development.
