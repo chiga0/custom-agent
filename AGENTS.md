@@ -8,9 +8,17 @@ The Web client is the first regression and observability surface. CLI, ACP, IDE,
 
 ## Documentation Language
 
-Chinese documentation under `docs/zh` is the default working documentation. English documentation lives under `docs/en` and may be synchronized later.
+Planning documentation lives in `custom-agent-docs`: https://github.com/chiga0/custom-agent-docs
 
-When changing architecture, roadmap, CI, permissions, memory, MCP, ACP, skills, or governance rules, update `docs/zh` first.
+Chinese documentation in `custom-agent-docs/docs/zh` is the canonical working documentation.
+
+When changing architecture, roadmap, CI, permissions, memory, MCP, ACP, skills, or governance rules, update `custom-agent-docs` first or in the same change sequence.
+
+## Roadmap Coordination
+
+Before starting non-trivial work, read `../custom-agent-docs/docs/zh/07-roadmap-status.md`. It is the centralized roadmap status source for parallel agent development.
+
+Every PR must name its `Work ID` from the docs repo status document and include the docs commit SHA it is based on.
 
 ## Non-Negotiable Architecture Rules
 
@@ -26,7 +34,8 @@ When changing architecture, roadmap, CI, permissions, memory, MCP, ACP, skills, 
 
 ## Development Rules
 
-- Every change must map to `docs/zh/02-roadmap.md` or an approved ADR.
+- Every change must map to `custom-agent-docs/docs/zh/02-roadmap.md` or an approved ADR.
+- Every implementation PR must map to a `Work ID` in `custom-agent-docs/docs/zh/07-roadmap-status.md`.
 - Do not add "nice to have" features outside the current milestone.
 - Do not duplicate event, tool, provider, permission, or config schemas.
 - Do not introduce circular dependencies.

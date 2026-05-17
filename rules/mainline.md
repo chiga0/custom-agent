@@ -6,7 +6,11 @@ Build a local-first, event-sourced agent core with strict adapters for models, t
 
 ## Documentation Language
 
-Chinese documentation in `docs/zh` is canonical for day-to-day project planning. English documentation in `docs/en` is maintained separately and may lag behind.
+Chinese documentation in `custom-agent-docs/docs/zh` is canonical for day-to-day project planning. English documentation in `custom-agent-docs/docs/en` is maintained separately and may lag behind.
+
+## Roadmap Status Source
+
+`custom-agent-docs/docs/zh/07-roadmap-status.md` is the central status source for parallel agent development. Agents must read it before opening implementation work.
 
 ## What Belongs On The Mainline
 

@@ -1,13 +1,19 @@
 # 文档入口
 
-本项目文档按语言目录隔离。
+本仓库是实现仓库，详细技术方案、roadmap、ADR、Work ID 和多 Agent 状态跟踪已经迁移到 `custom-agent-docs`。
 
-- [中文文档](zh/README.md)：默认维护入口，当前所有新增设计、roadmap、评审和规范优先写中文。
-- [English Docs](en/README.md)：英文文档目录，当前保存项目初始化阶段的英文原文，后续按需补齐和同步。
+## 事实源
 
-## 维护规则
+- GitHub: https://github.com/chiga0/custom-agent-docs
+- 本地推荐路径：`../custom-agent-docs`
+- Roadmap 状态中心：`../custom-agent-docs/docs/zh/07-roadmap-status.md`
+- 仓库关系说明：`../custom-agent-docs/docs/zh/08-repository-relationship.md`
 
-- 默认先更新 `docs/zh`。
-- 英文文档可以滞后，但同名文档应保持主题一致。
-- 改动架构、roadmap、CI、权限、memory、MCP、ACP、skills 时，必须先更新中文文档。
-- 如果英文文档尚未同步，在中文文档中保留准确信息，以中文为准。
+## 本仓库保留的文档职责
+
+- Package-level README。
+- 与代码强绑定的实现说明。
+- 测试、运行和 release 说明。
+- 指向 docs repo 的入口。
+
+不要在本仓库维护 roadmap/status/ADR 的副本。

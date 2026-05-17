@@ -51,14 +51,11 @@ npm run build:web
 
 ## Docs
 
-Documentation is language-scoped. Chinese is the default working documentation, and English is maintained under `docs/en` for later synchronization.
+Planning docs live in the separate source-of-truth repository:
 
-- [Documentation Index](docs/README.md)
-- [中文文档](docs/zh/README.md)
-- [可行性复盘](docs/zh/00-feasibility-review.md)
-- [架构设计](docs/zh/01-architecture-design.md)
-- [可执行路线图](docs/zh/02-roadmap.md)
-- [质量、CI 与测试策略](docs/zh/03-quality-ci-test-strategy.md)
-- [AI 协作治理与主线规则](docs/zh/04-ai-governance-mainline.md)
-- [Web Client 回归方案](docs/zh/05-web-client-regression.md)
-- [实施 Backlog](docs/zh/06-implementation-backlog.md)
+- [custom-agent-docs](https://github.com/chiga0/custom-agent-docs)
+- Local recommended path: `../custom-agent-docs`
+- Roadmap status: `../custom-agent-docs/docs/zh/07-roadmap-status.md`
+- Repository relationship: `../custom-agent-docs/docs/zh/08-repository-relationship.md`
+
+This implementation repository keeps only local development notes and links to the docs source of truth.
