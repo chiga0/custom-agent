@@ -47,3 +47,19 @@ Every PR must name its `Work ID` from the docs repo status document and include 
 ## Review Rule
 
 Before merging any substantial change, run the `mainline-guardian` skill manually or through CI and resolve all blocking findings.
+
+## Pull Request Lifecycle
+
+Multi-agent collaboration depends on every PR being visible to other agents/reviewers as early as possible. Apply these rules:
+
+- **Open every PR as `draft` first.** Push the branch as soon as there is a meaningful first commit (scaffold + failing tests is fine; an empty branch is not). Open the PR via `gh pr create --draft`. This makes the work visible, lets other agents leave comments and code suggestions during development, and prevents accidental early merges.
+- **Promote to "ready for review" only when all of the following hold:**
+  - All deliverables for the `Work ID` are implemented.
+  - `mainline-guardian` self-check is PASS.
+  - `format:check`, `lint`, `typecheck`, `test`, `test:architecture`, and any Web regression suites pass locally.
+  - PR description fully completed (Roadmap Status, Boundary/Permission/Memory/Event Impact, Tests, Rollback Plan).
+- **While the PR is a draft, reviewer agents are still expected to:**
+  - Triage the diff and flag obvious issues early (don't wait for "ready").
+  - Post comments using the `mainline-guardian` format so the author can iterate while in draft.
+- **Once promoted to ready, follow the normal review/CI/merge gate** described in `custom-agent-docs/docs/zh/03-roadmap-status.md §10`.
+- **Self-approval is structurally blocked by GitHub.** Authors must not approve their own PRs even when acting in a reviewer role. If the project is currently single-maintainer, merge with `--admin` after a documented Round 2 PASS comment from the reviewer agent.
