@@ -3,6 +3,13 @@ import { appendFile, mkdir, open } from "node:fs/promises";
 import { dirname } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
+export {
+  SessionIndex,
+  type SessionIndexRow,
+  type TurnIndexRow,
+  type SessionClient,
+} from "./session-index";
+
 // JSONL event log for an event-sourced session.
 //
 // Durability: writes go through fs.promises.appendFile without an explicit
