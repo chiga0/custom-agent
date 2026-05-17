@@ -4,6 +4,10 @@
 
 Build a local-first, event-sourced agent core with strict adapters for models, tools, memory, skills, protocols, and clients.
 
+## Documentation Language
+
+Chinese documentation in `docs/zh` is canonical for day-to-day project planning. English documentation in `docs/en` is maintained separately and may lag behind.
+
 ## What Belongs On The Mainline
 
 - Session engine.

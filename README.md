@@ -18,7 +18,7 @@ packages/
   core            Session orchestration boundary
   storage         Event log and indexes
   permissions     Central permission policy
-docs/             Architecture, roadmap, CI, and governance docs
+docs/             Language-scoped architecture, roadmap, CI, and governance docs
 rules/            Project mainline rules
 skills/           Project-specific AI review skills
 tests/            Cross-package architecture tests
@@ -51,10 +51,14 @@ npm run build:web
 
 ## Docs
 
-- [Feasibility Review](docs/00-feasibility-review.md)
-- [Architecture Design](docs/01-architecture-design.md)
-- [Executable Roadmap](docs/02-roadmap.md)
-- [Quality, CI, and Test Strategy](docs/03-quality-ci-test-strategy.md)
-- [AI Governance and Mainline Rules](docs/04-ai-governance-mainline.md)
-- [Web Client Regression Plan](docs/05-web-client-regression.md)
-- [Implementation Backlog](docs/06-implementation-backlog.md)
+Documentation is language-scoped. Chinese is the default working documentation, and English is maintained under `docs/en` for later synchronization.
+
+- [Documentation Index](docs/README.md)
+- [中文文档](docs/zh/README.md)
+- [可行性复盘](docs/zh/00-feasibility-review.md)
+- [架构设计](docs/zh/01-architecture-design.md)
+- [可执行路线图](docs/zh/02-roadmap.md)
+- [质量、CI 与测试策略](docs/zh/03-quality-ci-test-strategy.md)
+- [AI 协作治理与主线规则](docs/zh/04-ai-governance-mainline.md)
+- [Web Client 回归方案](docs/zh/05-web-client-regression.md)
+- [实施 Backlog](docs/zh/06-implementation-backlog.md)

@@ -6,6 +6,12 @@ Build a local-first, event-sourced AI coding agent core with strict adapters for
 
 The Web client is the first regression and observability surface. CLI, ACP, IDE, and channel clients must remain adapters over the same core.
 
+## Documentation Language
+
+Chinese documentation under `docs/zh` is the default working documentation. English documentation lives under `docs/en` and may be synchronized later.
+
+When changing architecture, roadmap, CI, permissions, memory, MCP, ACP, skills, or governance rules, update `docs/zh` first.
+
 ## Non-Negotiable Architecture Rules
 
 - Keep `core` independent of Web, CLI, ACP, provider SDKs, and MCP transport details.
@@ -20,7 +26,7 @@ The Web client is the first regression and observability surface. CLI, ACP, IDE,
 
 ## Development Rules
 
-- Every change must map to `docs/02-roadmap.md` or an approved ADR.
+- Every change must map to `docs/zh/02-roadmap.md` or an approved ADR.
 - Do not add "nice to have" features outside the current milestone.
 - Do not duplicate event, tool, provider, permission, or config schemas.
 - Do not introduce circular dependencies.
