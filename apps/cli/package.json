@@ -1,0 +1,12 @@
+{
+  "name": "@custom-agent/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "custom-agent": "./src/index.ts"
+  },
+  "dependencies": {
+    "@custom-agent/core": "0.1.0"
+  }
+}

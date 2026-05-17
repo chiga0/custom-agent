@@ -1,0 +1,9 @@
+{
+  "name": "@custom-agent/acp-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@custom-agent/core": "0.1.0"
+  }
+}

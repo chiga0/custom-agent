@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "module": "ESNext",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "skipLibCheck": true,
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": false,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "@custom-agent/schema": ["packages/schema/src/index.ts"],
+      "@custom-agent/core": ["packages/core/src/index.ts"],
+      "@custom-agent/storage": ["packages/storage/src/index.ts"],
+      "@custom-agent/permissions": ["packages/permissions/src/index.ts"]
+    }
+  }
+}

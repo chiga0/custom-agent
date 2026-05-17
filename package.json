@@ -1,0 +1,33 @@
+{
+  "name": "custom-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build:web": "npm --workspace @custom-agent/web-client run build",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:architecture": "vitest run tests/architecture",
+    "test:contract": "vitest run tests/contract --passWithNoTests",
+    "test:security": "vitest run tests/security --passWithNoTests",
+    "test:unit": "vitest run packages apps",
+    "test:web": "vitest run apps/web-client",
+    "typecheck": "tsc -p tsconfig.check.json --noEmit"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/node": "^24.10.1",
+    "eslint": "^9.39.1",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.4",
+    "vite": "^7.2.4",
+    "vitest": "^4.0.14"
+  }
+}
