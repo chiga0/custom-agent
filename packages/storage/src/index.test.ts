@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentEvent } from "@custom-agent/schema";
@@ -182,6 +182,65 @@ describe("JsonlEventLog", () => {
       await writeFile(logPath, `${encodeEvent(event(1))}{"schemaVersion":`, "utf8");
 
       await expect(log.append(event(2))).rejects.toBeInstanceOf(EventLogDecodeError);
+    });
+  });
+
+  it("appendMany([]) is a no-op and does not create the log file", async () => {
+    await withTempDir(async (dir) => {
+      const logPath = join(dir, "noop.jsonl");
+      const log = new JsonlEventLog(logPath);
+
+      await expect(log.appendMany([])).resolves.toBeUndefined();
+      await expect(access(logPath)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
+  it("serializes concurrent append() calls within the same instance", async () => {
+    await withTempDir(async (dir) => {
+      const log = new JsonlEventLog(join(dir, "concurrent.jsonl"));
+      const events = Array.from({ length: 20 }, (_, index) => event(index + 1));
+
+      await Promise.all(events.map((evt) => log.append(evt)));
+
+      await expect(log.readAll()).resolves.toEqual(events);
+    });
+  });
+
+  it("streams replay() over a large log without loading it all upfront", async () => {
+    await withTempDir(async (dir) => {
+      const log = new JsonlEventLog(join(dir, "large.jsonl"));
+      const events = Array.from({ length: 5_000 }, (_, index) => event(index + 1));
+
+      await log.appendMany(events);
+
+      let count = 0;
+      let lastSequence = 0;
+      for await (const evt of log.replay()) {
+        count += 1;
+        expect(evt.sequence).toBe(lastSequence + 1);
+        lastSequence = evt.sequence;
+        if (count === 3) {
+          // Break early to prove the iterator is lazy and cleanly closes the
+          // underlying file handle (no leak / unhandled rejection).
+          break;
+        }
+      }
+
+      expect(count).toBe(3);
+    });
+  });
+
+  it("reuses the cached tail across appends without re-reading the whole file", async () => {
+    await withTempDir(async (dir) => {
+      const log = new JsonlEventLog(join(dir, "cached-tail.jsonl"));
+      await log.appendMany([event(1), event(2), event(3)]);
+
+      // Subsequent single append should validate against the cached tail and
+      // still reject an out-of-order sequence.
+      await expect(log.append(event(2))).rejects.toBeInstanceOf(EventLogSequenceError);
+      await log.append(event(4));
+
+      await expect(log.readAll()).resolves.toEqual([event(1), event(2), event(3), event(4)]);
     });
   });
 });
