@@ -4,11 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentEvent } from "@custom-agent/schema";
 import {
+  EventStoreFailure,
   FakeStreamingProvider,
-  JsonlFileEventStore,
   SessionEngine,
   type EventStore,
+  type ModelProvider,
+  type ModelRequest,
+  type ModelStreamEvent,
 } from "./index";
+import { JsonlFileEventStore } from "./adapters/jsonl-event-store";
 
 class InMemoryEventStore implements EventStore {
   readonly events: AgentEvent[] = [];
@@ -205,6 +209,169 @@ describe("SessionEngine", () => {
         // unreachable
       }
     }).rejects.toThrow(/Unknown session/);
+  });
+
+  // ---- P1 regression tests (PR #4 review) ----
+
+  it("does not leak a post-cancel model.delta even if the provider yields one", async () => {
+    // A misbehaving provider that yields ONE MORE text_delta after seeing
+    // an abort signal. SessionEngine must drop it.
+    class LeakyProvider implements ModelProvider {
+      readonly id = "leaky";
+      readonly capabilities = {
+        streaming: true,
+        toolCall: false,
+        parallelToolCall: false,
+        reasoning: false,
+        maxContextTokens: 1000,
+      };
+      async *stream(_req: ModelRequest, _signal: AbortSignal): AsyncIterable<ModelStreamEvent> {
+        void _req;
+        void _signal;
+        yield { type: "text_delta", delta: "a" };
+        // Caller aborts between yields. A misbehaving provider keeps yielding.
+        yield { type: "text_delta", delta: "POST_ABORT_LEAK" };
+      }
+    }
+    const store = new InMemoryEventStore();
+    let id = 0;
+    const engine = new SessionEngine({
+      eventStore: store,
+      provider: new LeakyProvider(),
+      now: () => new Date("2026-05-18T00:00:00.000Z"),
+      createId: (prefix) => `${prefix}_${++id}`,
+    });
+
+    const session = await engine.createSession({ cwd: "/tmp", client: "test" });
+    const types: string[] = [];
+    const deltaTexts: string[] = [];
+
+    for await (const event of engine.runTurn({
+      sessionId: session.sessionId,
+      userMessage: "go",
+    })) {
+      types.push(event.type);
+      if (event.type === "model.delta") {
+        deltaTexts.push((event.payload as { text: string }).text);
+        if (deltaTexts.length === 1) {
+          await engine.cancelTurn({ sessionId: session.sessionId });
+        }
+      }
+    }
+
+    // The leak delta MUST NOT appear in event order or in the durable store.
+    expect(deltaTexts).toEqual(["a"]);
+    expect(types.at(-1)).toBe("turn.completed");
+    const persistedDeltaTexts = store.events
+      .filter((e) => e.type === "model.delta")
+      .map((e) => (e.payload as { text: string }).text);
+    expect(persistedDeltaTexts).toEqual(["a"]);
+  });
+
+  it("classifies EventStore append failure as EventStoreFailure (not provider error)", async () => {
+    let calls = 0;
+    const failingStore: EventStore = {
+      async append() {
+        calls += 1;
+        // Allow first 3 appends (session.created, turn.started, user.message),
+        // then fail on the first model.delta.
+        if (calls >= 4) {
+          throw new Error("disk full");
+        }
+      },
+      async *replay() {},
+    };
+    const engine = new SessionEngine({
+      eventStore: failingStore,
+      provider: new FakeStreamingProvider({ chunks: ["x"] }),
+      now: () => new Date("2026-05-18T00:00:00.000Z"),
+      createId: (prefix) => `${prefix}_x`,
+    });
+
+    const session = await engine.createSession({ cwd: "/tmp", client: "test" });
+
+    let caught: unknown;
+    try {
+      for await (const _evt of engine.runTurn({
+        sessionId: session.sessionId,
+        userMessage: "go",
+      })) {
+        void _evt;
+      }
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(EventStoreFailure);
+    expect((caught as EventStoreFailure).sessionId).toBe(session.sessionId);
+    expect((caught as EventStoreFailure).cause).toBeInstanceOf(Error);
+  });
+
+  it("does not skip sequence numbers when an append fails partway", async () => {
+    // Reuse the failing-on-4th-call pattern but verify that the persisted
+    // events have contiguous sequences 1..3 (no gap at 4) so a retry could
+    // re-occupy that slot.
+    let calls = 0;
+    const successful: AgentEvent[] = [];
+    const failingStore: EventStore = {
+      async append(_sid, event) {
+        calls += 1;
+        if (calls >= 4) {
+          throw new Error("disk full");
+        }
+        successful.push(event);
+      },
+      async *replay() {
+        for (const e of successful) yield e;
+      },
+    };
+    const engine = new SessionEngine({
+      eventStore: failingStore,
+      provider: new FakeStreamingProvider({ chunks: ["x", "y"] }),
+      now: () => new Date("2026-05-18T00:00:00.000Z"),
+      createId: (prefix) => `${prefix}_x`,
+    });
+
+    const session = await engine.createSession({ cwd: "/tmp", client: "test" });
+
+    try {
+      for await (const _evt of engine.runTurn({
+        sessionId: session.sessionId,
+        userMessage: "go",
+      })) {
+        void _evt;
+      }
+    } catch {
+      // expected
+    }
+
+    // Sequences 1 (session.created), 2 (turn.started), 3 (user.message)
+    // were persisted; 4 (first model.delta) failed and was rolled back so
+    // no gap exists. The next attempted retry could reuse sequence 4.
+    expect(successful.map((e) => e.sequence)).toEqual([1, 2, 3]);
+  });
+
+  it("tracks an explicit turn FSM history through happy path / cancel / error", async () => {
+    const { engine } = makeEngine({ provider: { chunks: ["x"] } });
+    const session = await engine.createSession({ cwd: "/tmp", client: "test" });
+
+    // Capture history at the moment cancelTurn is being processed.
+    let capturedAfterDelta: ReturnType<SessionEngine["getActiveTurnHistory"]>;
+
+    for await (const event of engine.runTurn({
+      sessionId: session.sessionId,
+      userMessage: "go",
+    })) {
+      if (event.type === "model.delta") {
+        capturedAfterDelta = engine.getActiveTurnHistory(session.sessionId);
+      }
+    }
+
+    // While the turn was running we should already have idle -> running.
+    expect(capturedAfterDelta).toBeDefined();
+    expect(capturedAfterDelta!.map((t) => `${t.from}->${t.to}`)).toEqual(["idle->running"]);
+    // After completion currentTurn is cleared, so getActiveTurnHistory is undefined.
+    expect(engine.getActiveTurnHistory(session.sessionId)).toBeUndefined();
   });
 });
 

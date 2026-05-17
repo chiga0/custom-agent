@@ -11,11 +11,25 @@ import type { ModelProvider } from "./ports/model-provider";
 // Invariants:
 //   - events are persisted via eventStore.append BEFORE being yielded to
 //     consumers (durable-then-visible);
-//   - sequence numbers are strictly increasing per session;
+//   - sequence numbers are strictly increasing per session AND never have
+//     gaps — sequence is reserved at the call site and only committed once
+//     eventStore.append resolves successfully;
 //   - cancellation is idempotent and surfaces via stopReason="cancelled" on
-//     turn.completed (no separate turn.cancelled event type for M1).
+//     turn.completed (no separate turn.cancelled event type for M1);
+//   - provider failures and infrastructure (event-store) failures are
+//     surfaced through different paths: provider failure -> stopReason=
+//     "error"; event-store failure aborts the turn and propagates as
+//     EventStoreFailure so the caller can decide whether to retry.
 
 export type SessionClient = "web" | "cli" | "acp" | "test";
+
+export type TurnState = "idle" | "running" | "completed" | "cancelled" | "failed";
+
+export type TurnTransition = {
+  readonly from: TurnState;
+  readonly to: TurnState;
+  readonly reason: string;
+};
 
 export type CreateSessionInput = {
   readonly cwd: string;
@@ -60,10 +74,50 @@ type SessionState = {
   currentTurn?: {
     turnId: string;
     controller: AbortController;
+    fsm: TurnFsm;
   };
 };
 
 type StopReason = "final" | "cancelled" | "error";
+
+export class EventStoreFailure extends Error {
+  constructor(
+    message: string,
+    readonly sessionId: string,
+    readonly cause: unknown,
+  ) {
+    super(message);
+    this.name = "EventStoreFailure";
+  }
+}
+
+// Encapsulates the turn state machine. Every transition goes through
+// `transition()` which asserts legality and appends to the history. The
+// recorded history is exposed for tests / observability.
+class TurnFsm {
+  private current: TurnState = "idle";
+  readonly history: TurnTransition[] = [];
+
+  get state(): TurnState {
+    return this.current;
+  }
+
+  transition(to: TurnState, reason: string): void {
+    if (!LEGAL_TRANSITIONS[this.current].has(to)) {
+      throw new Error(`Illegal turn transition: ${this.current} -> ${to} (${reason})`);
+    }
+    this.history.push({ from: this.current, to, reason });
+    this.current = to;
+  }
+}
+
+const LEGAL_TRANSITIONS: Record<TurnState, ReadonlySet<TurnState>> = {
+  idle: new Set(["running"]),
+  running: new Set(["completed", "cancelled", "failed"]),
+  completed: new Set(),
+  cancelled: new Set(),
+  failed: new Set(),
+};
 
 export class SessionEngine {
   private readonly eventStore: EventStore;
@@ -93,7 +147,7 @@ export class SessionEngine {
       payload: { cwd: input.cwd, client: input.client },
     };
 
-    await this.eventStore.append(sessionId, event);
+    await this.appendOrFail(sessionId, event);
 
     this.sessions.set(sessionId, {
       sessionId,
@@ -123,11 +177,14 @@ export class SessionEngine {
     const turnId = this.createId("turn");
     const controller = new AbortController();
     const signal = mergeSignals(input.signal, controller.signal);
-    state.currentTurn = { turnId, controller };
+    const fsm = new TurnFsm();
+    state.currentTurn = { turnId, controller, fsm };
 
     let stopReason: StopReason = "final";
 
     try {
+      // idle -> running, persisted via turn.started.
+      fsm.transition("running", "turn.started");
       yield await this.emitTurnStarted(state, turnId, input.userMessage);
       yield await this.emitUserMessage(state, turnId, input.userMessage);
 
@@ -139,6 +196,13 @@ export class SessionEngine {
           messages: [{ role: "user" as const, content: input.userMessage }],
         };
         for await (const chunk of this.provider.stream(request, signal)) {
+          // Guard BEFORE persist+yield: prevents a post-abort delta yielded
+          // by the provider (e.g. between abort and its own check) from
+          // leaking into the event log.
+          if (signal.aborted) {
+            stopReason = "cancelled";
+            break;
+          }
           if (chunk.type === "text_delta") {
             yield await this.emitModelDelta(state, turnId, chunk.delta);
           } else if (chunk.type === "failed") {
@@ -147,14 +211,29 @@ export class SessionEngine {
           }
           // "completed" just terminates the loop naturally.
         }
-
         if (signal.aborted && stopReason === "final") {
           stopReason = "cancelled";
         }
-      } catch {
+      } catch (error) {
+        // EventStore failures are infrastructure failures, not provider
+        // failures. Mark the turn as failed but rethrow AFTER turn.completed
+        // is appended so the event log stays consistent.
+        if (error instanceof EventStoreFailure) {
+          stopReason = "error";
+          fsm.transition("failed", `turn.completed (stopReason=error, cause=EventStoreFailure)`);
+          // Try once to emit turn.completed; if THAT also fails, propagate.
+          try {
+            yield await this.emitTurnCompleted(state, turnId, stopReason);
+          } catch {
+            // swallow: original failure is more informative
+          }
+          throw error;
+        }
         stopReason = signal.aborted ? "cancelled" : "error";
       }
 
+      // Normal exit: bind FSM exit state to stopReason and emit completion.
+      fsm.transition(stopReasonToState(stopReason), `turn.completed (stopReason=${stopReason})`);
       yield await this.emitTurnCompleted(state, turnId, stopReason);
     } finally {
       state.currentTurn = undefined;
@@ -176,6 +255,15 @@ export class SessionEngine {
     yield* this.eventStore.replay(input.sessionId);
   }
 
+  /**
+   * Test-only accessor: returns the immutable transition history of the
+   * currently-active turn, or undefined when no turn is running.
+   */
+  getActiveTurnHistory(sessionId: string): TurnTransition[] | undefined {
+    const turn = this.sessions.get(sessionId)?.currentTurn;
+    return turn ? [...turn.fsm.history] : undefined;
+  }
+
   // ---- private helpers ----
 
   private async emitTurnStarted(
@@ -183,19 +271,11 @@ export class SessionEngine {
     turnId: string,
     userMessage: string,
   ): Promise<AgentEvent> {
-    const event: AgentEvent = {
-      id: this.createId("evt"),
-      schemaVersion: 1,
-      sessionId: state.sessionId,
+    return this.commitEvent(state, {
       turnId,
-      sequence: state.nextSequence,
-      timestamp: this.now().toISOString(),
       type: "turn.started",
       payload: { promptPreview: userMessage.slice(0, 80) },
-    };
-    state.nextSequence += 1;
-    await this.eventStore.append(state.sessionId, event);
-    return event;
+    });
   }
 
   private async emitUserMessage(
@@ -203,19 +283,11 @@ export class SessionEngine {
     turnId: string,
     userMessage: string,
   ): Promise<AgentEvent> {
-    const event: AgentEvent = {
-      id: this.createId("evt"),
-      schemaVersion: 1,
-      sessionId: state.sessionId,
+    return this.commitEvent(state, {
       turnId,
-      sequence: state.nextSequence,
-      timestamp: this.now().toISOString(),
       type: "user.message",
       payload: { content: userMessage },
-    };
-    state.nextSequence += 1;
-    await this.eventStore.append(state.sessionId, event);
-    return event;
+    });
   }
 
   private async emitModelDelta(
@@ -223,19 +295,11 @@ export class SessionEngine {
     turnId: string,
     text: string,
   ): Promise<AgentEvent> {
-    const event: AgentEvent = {
-      id: this.createId("evt"),
-      schemaVersion: 1,
-      sessionId: state.sessionId,
+    return this.commitEvent(state, {
       turnId,
-      sequence: state.nextSequence,
-      timestamp: this.now().toISOString(),
       type: "model.delta",
       payload: { text },
-    };
-    state.nextSequence += 1;
-    await this.eventStore.append(state.sessionId, event);
-    return event;
+    });
   }
 
   private async emitTurnCompleted(
@@ -243,19 +307,50 @@ export class SessionEngine {
     turnId: string,
     stopReason: StopReason,
   ): Promise<AgentEvent> {
-    const event: AgentEvent = {
-      id: this.createId("evt"),
-      schemaVersion: 1,
-      sessionId: state.sessionId,
+    return this.commitEvent(state, {
       turnId,
-      sequence: state.nextSequence,
-      timestamp: this.now().toISOString(),
       type: "turn.completed",
       payload: { stopReason },
-    };
-    state.nextSequence += 1;
-    await this.eventStore.append(state.sessionId, event);
+    });
+  }
+
+  /**
+   * Reserves a sequence number, persists the event, then commits the next
+   * sequence ONLY on successful append. A failed append leaves the sequence
+   * unchanged so the next attempt can reuse the same slot and the log never
+   * has a numeric gap.
+   */
+  private async commitEvent(
+    state: SessionState,
+    partial: Pick<AgentEvent, "turnId" | "type" | "payload">,
+  ): Promise<AgentEvent> {
+    const sequence = state.nextSequence;
+    const event = {
+      id: this.createId("evt"),
+      schemaVersion: 1 as const,
+      sessionId: state.sessionId,
+      turnId: partial.turnId,
+      sequence,
+      timestamp: this.now().toISOString(),
+      type: partial.type,
+      payload: partial.payload,
+    } as AgentEvent;
+
+    await this.appendOrFail(state.sessionId, event);
+    state.nextSequence = sequence + 1;
     return event;
+  }
+
+  private async appendOrFail(sessionId: string, event: AgentEvent): Promise<void> {
+    try {
+      await this.eventStore.append(sessionId, event);
+    } catch (error) {
+      throw new EventStoreFailure(
+        `EventStore.append failed for session ${sessionId} at sequence ${event.sequence}`,
+        sessionId,
+        error,
+      );
+    }
   }
 }
 
@@ -264,4 +359,15 @@ function mergeSignals(external: AbortSignal | undefined, internal: AbortSignal):
     return internal;
   }
   return AbortSignal.any([external, internal]);
+}
+
+function stopReasonToState(stopReason: StopReason): TurnState {
+  switch (stopReason) {
+    case "final":
+      return "completed";
+    case "cancelled":
+      return "cancelled";
+    case "error":
+      return "failed";
+  }
 }

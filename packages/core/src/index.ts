@@ -1,4 +1,5 @@
 export {
+  EventStoreFailure,
   SessionEngine,
   type CancelTurnInput,
   type CreateSessionInput,
@@ -7,6 +8,8 @@ export {
   type Session,
   type SessionClient,
   type SessionEngineDeps,
+  type TurnState,
+  type TurnTransition,
 } from "./session-engine";
 
 export {
@@ -14,7 +17,12 @@ export {
   type FakeStreamingProviderOptions,
 } from "./providers/fake-provider";
 
-export { JsonlFileEventStore } from "./adapters/jsonl-event-store";
+// NOTE: JsonlFileEventStore intentionally NOT re-exported from this barrel.
+// It is a storage-coupled adapter; importing it eagerly through the core
+// barrel would pull @custom-agent/storage into every consumer of pure core
+// types and weaken the EventStore port boundary. Tests inside this package
+// import it via the relative path. A follow-up will move it to
+// packages/storage where the implementation actually lives.
 
 export type {
   ModelCapabilities,
