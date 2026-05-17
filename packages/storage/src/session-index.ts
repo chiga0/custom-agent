@@ -1,8 +1,9 @@
+import { mkdirSync } from "node:fs";
 import { readdir } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import Database, { type Database as DatabaseInstance } from "better-sqlite3";
 import type { AgentEvent } from "@custom-agent/schema";
-import { JsonlEventLog } from "./index";
+import { JsonlEventLog } from "./event-log";
 
 // SQLite-backed projection of the JSONL event log. Maintains a session
 // roster + per-session turn list so clients do not have to replay every
@@ -69,7 +70,8 @@ const SCHEMA = `
     started_at TEXT,
     completed_at TEXT,
     stop_reason TEXT,
-    PRIMARY KEY (session_id, turn_id)
+    PRIMARY KEY (session_id, turn_id),
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
   );
 
   CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON sessions(created_at DESC);
@@ -80,6 +82,10 @@ export class SessionIndex {
   private readonly db: DatabaseInstance;
 
   constructor(readonly dbPath: string) {
+    // Match JsonlEventLog's behavior: create the parent directory if needed
+    // so callers can pass a nested path on a fresh storage root without
+    // pre-creating directories.
+    mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
@@ -124,19 +130,17 @@ export class SessionIndex {
   }
 
   async rebuildFromEventLogs(rootDir: string): Promise<void> {
-    this.reset();
-
+    // Collect file list BEFORE the transaction so a directory-walk failure
+    // (permissions, ENOENT for non-root) does not leave the transaction
+    // half-open. If collect fails outside BEGIN, the existing index stays.
     const files = await collectJsonlFiles(rootDir);
-    if (files.length === 0) {
-      return;
-    }
 
-    // Stream each log under a single transaction to avoid per-event commit
-    // overhead. better-sqlite3 transactions are sync, but apply() itself only
-    // issues sync queries inside the loop body, so wrapping async iteration
-    // this way is safe.
+    // Drop + replay must be atomic so a corrupt JSONL line, schema
+    // violation, or FK conflict during replay does NOT destroy an existing
+    // usable index. The DELETE itself runs inside the transaction.
     this.db.exec("BEGIN");
     try {
+      this.db.exec("DELETE FROM turns; DELETE FROM sessions;");
       for (const file of files) {
         const log = new JsonlEventLog(file);
         for await (const event of log.replay()) {
@@ -150,6 +154,9 @@ export class SessionIndex {
     }
   }
 
+  /** @deprecated kept only for tests that want to forcibly clear without a
+   * rebuild target; production code should call rebuildFromEventLogs instead
+   * to keep "clear" inside a single transaction with the replay it pairs with. */
   reset(): void {
     this.db.exec("DELETE FROM turns; DELETE FROM sessions;");
   }

@@ -228,4 +228,83 @@ describe("SessionIndex", () => {
       }
     });
   });
+
+  // ---- PR #2 review regression tests ----
+
+  it("preserves a usable index when rebuildFromEventLogs fails mid-replay (atomicity)", async () => {
+    await withTempDir(async (dir) => {
+      const sessionsDir = join(dir, "sessions");
+      const dbPath = join(dir, "index.db");
+
+      // Seed: write one VALID jsonl + one CORRUPT jsonl. Replay of the
+      // corrupt file should throw EventLogDecodeError; the atomic guarantee
+      // is that the pre-rebuild index survives unchanged.
+      const goodLog = new JsonlEventLog(join(sessionsDir, "good.jsonl"));
+      await goodLog.appendMany(fullSession("sess_good", "turn_g1"));
+
+      // Hand-craft a corrupt JSONL file (valid first line + garbage second
+      // line so the replay sees a mid-stream decode error, not a tolerable
+      // trailing partial).
+      const { writeFile } = await import("node:fs/promises");
+      await writeFile(
+        join(sessionsDir, "z_corrupt.jsonl"),
+        `{"id":"x","schemaVersion":1,"sessionId":"sess_bad","sequence":1,"timestamp":"2026-05-18T00:00:00.000Z","type":"session.created","payload":{"cwd":"/x","client":"test"}}
+GARBAGE NOT JSON
+`,
+        "utf8",
+      );
+
+      const index = new SessionIndex(dbPath);
+      try {
+        // Prime the index with a pre-existing usable state (different from
+        // either log file) — this is what we must NOT lose.
+        index.applyMany(fullSession("sess_preexisting", "turn_p1"));
+        const before = index.listSessions().map((s) => s.sessionId);
+        expect(before).toEqual(["sess_preexisting"]);
+
+        // rebuild MUST throw because the corrupt file fails replay.
+        await expect(index.rebuildFromEventLogs(sessionsDir)).rejects.toThrow();
+
+        // Pre-existing index is intact — ROLLBACK fired before DELETE
+        // could be committed.
+        expect(index.listSessions().map((s) => s.sessionId)).toEqual(["sess_preexisting"]);
+      } finally {
+        index.close();
+      }
+    });
+  });
+
+  it("rejects orphan turn rows via FK when session.created has not been applied", async () => {
+    await withTempDir(async (dir) => {
+      const index = new SessionIndex(join(dir, "index.db"));
+      try {
+        // Apply ONLY a turn.started event for a session that was never created.
+        // FK constraint MUST refuse the insert — silently swallowing would
+        // hide upstream sequencing bugs (the M1-01 event log enforces that
+        // session.created arrives first; if an index sees a turn event with
+        // no parent, something is wrong and we want it to be loud).
+        const orphanTurn = turnStarted("ghost_session", "ghost_turn");
+        expect(() => index.apply(orphanTurn)).toThrow(/FOREIGN KEY/i);
+        expect(index.listSessions()).toEqual([]);
+        expect(index.listTurns("ghost_session")).toEqual([]);
+      } finally {
+        index.close();
+      }
+    });
+  });
+
+  it("creates the DB parent directory if it does not exist", async () => {
+    await withTempDir(async (dir) => {
+      // Nested path that has no pre-existing directory chain.
+      const nestedPath = join(dir, "deep", "deeper", "index.db");
+      let index: SessionIndex | undefined;
+      try {
+        index = new SessionIndex(nestedPath);
+        // Smoke test: instance is usable.
+        expect(index.listSessions()).toEqual([]);
+      } finally {
+        index?.close();
+      }
+    });
+  });
 });
