@@ -1,0 +1,17 @@
+{
+  "name": "@custom-agent/acp-daemon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "acp-daemon": "./bin/acp-daemon.mjs"
+  },
+  "dependencies": {
+    "@custom-agent/acp-server": "0.1.0",
+    "@custom-agent/schema": "0.1.0",
+    "tsx": "^4.22.1"
+  }
+}
