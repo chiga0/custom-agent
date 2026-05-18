@@ -60,6 +60,14 @@ export const eventTypes = [
   "turn.completed",
 ] as const satisfies readonly AgentEvent["type"][];
 
+// ACP (Agent Client Protocol) wire-contract types live in a separate
+// subpath (`@custom-agent/schema/acp`) so non-ACP consumers of this schema
+// package don't transitively load the ACP SDK runtime. Import only what
+// you need:
+//   - AgentEvent types / isAgentEvent → `@custom-agent/schema`
+//   - ACP wire types / AgentSideConnection / ndJsonStream → `@custom-agent/schema/acp`
+// See packages/schema/src/acp.ts for what the subpath exports.
+
 export function isAgentEvent(value: unknown): value is AgentEvent {
   if (!value || typeof value !== "object") {
     return false;

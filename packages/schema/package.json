@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./acp": "./src/acp.ts"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.21.1"
   }
 }
