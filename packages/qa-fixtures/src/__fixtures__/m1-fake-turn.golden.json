@@ -1,0 +1,39 @@
+[
+  {
+    "payload": {
+      "client": "test",
+      "cwd": "/golden/cwd"
+    },
+    "type": "session.created"
+  },
+  {
+    "payload": {
+      "promptPreview": "say hi"
+    },
+    "type": "turn.started"
+  },
+  {
+    "payload": {
+      "content": "say hi"
+    },
+    "type": "user.message"
+  },
+  {
+    "payload": {
+      "text": "Hello, "
+    },
+    "type": "model.delta"
+  },
+  {
+    "payload": {
+      "text": "world."
+    },
+    "type": "model.delta"
+  },
+  {
+    "payload": {
+      "stopReason": "final"
+    },
+    "type": "turn.completed"
+  }
+]

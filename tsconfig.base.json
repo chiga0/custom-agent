@@ -22,7 +22,8 @@
       "@custom-agent/acp-daemon": ["apps/acp-daemon/src/index.ts"],
       "@custom-agent/core": ["packages/core/src/index.ts"],
       "@custom-agent/storage": ["packages/storage/src/index.ts"],
-      "@custom-agent/permissions": ["packages/permissions/src/index.ts"]
+      "@custom-agent/permissions": ["packages/permissions/src/index.ts"],
+      "@custom-agent/qa-fixtures": ["packages/qa-fixtures/src/index.ts"]
     }
   }
 }
