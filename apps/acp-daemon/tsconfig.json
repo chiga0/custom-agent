@@ -4,6 +4,5 @@
     "composite": true,
     "rootDir": "src"
   },
-  "include": ["src"],
-  "references": [{ "path": "../../packages/schema" }]
+  "include": ["src"]
 }

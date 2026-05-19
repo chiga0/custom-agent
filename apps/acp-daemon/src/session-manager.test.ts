@@ -300,6 +300,56 @@ describe("SessionManager", () => {
     expect(() => manager.forwardNotification("sess_n", "session/cancel", {})).not.toThrow();
   });
 
+  it("garbage-collects terminated sessions after the grace window", async () => {
+    const child = makeChild(standardHandler("sess_gc"));
+    children.push(child);
+    const scheduled: Array<() => void> = [];
+    const manager = new SessionManager({
+      spawnChild: () => child as unknown as ChildHandle,
+      terminatedGraceMs: 1, // value unused; scheduler is manual
+      scheduleTimer: (handler) => {
+        scheduled.push(handler);
+        return () => {
+          const idx = scheduled.indexOf(handler);
+          if (idx >= 0) scheduled.splice(idx, 1);
+        };
+      },
+    });
+    await manager.createSession({ initializeParams: { protocolVersion: 1 }, newSessionParams: {} });
+    expect(manager.list()).toHaveLength(1);
+
+    child.simulateCrash(137);
+    // Synthetic terminate event is now buffered; entry is still in map
+    // until the grace timer fires.
+    expect(manager.list()).toHaveLength(1);
+    expect(manager.get("sess_gc")?.status).toBe("terminated");
+
+    // Trigger the scheduled cleanup.
+    expect(scheduled).toHaveLength(1);
+    scheduled[0]();
+    expect(manager.list()).toHaveLength(0);
+    expect(manager.get("sess_gc")).toBeUndefined();
+  });
+
+  it("terminate() cancels the grace timer", async () => {
+    const child = makeChild(standardHandler("sess_cancel"));
+    children.push(child);
+    let cancelCount = 0;
+    const manager = new SessionManager({
+      spawnChild: () => child as unknown as ChildHandle,
+      scheduleTimer: () => {
+        return () => {
+          cancelCount += 1;
+        };
+      },
+    });
+    await manager.createSession({ initializeParams: { protocolVersion: 1 }, newSessionParams: {} });
+    child.simulateCrash(0);
+    await manager.terminate("sess_cancel");
+    expect(cancelCount).toBe(1);
+    expect(manager.list()).toHaveLength(0);
+  });
+
   it("terminateAll removes every session and kills children", async () => {
     const childA = makeChild(standardHandler("s_X"));
     const childB = makeChild(standardHandler("s_Y"));

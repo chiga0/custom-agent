@@ -42,6 +42,11 @@ const forbiddenEdges = [
     to: "packages/storage/internal/",
     reason: "clients must not mutate session storage directly",
   },
+  {
+    from: "apps/acp-daemon",
+    to: "packages/core",
+    reason: "daemon is a pure transport adapter; must not import core directly",
+  },
 ];
 
 async function collectTypeScriptFiles(dir: string): Promise<string[]> {

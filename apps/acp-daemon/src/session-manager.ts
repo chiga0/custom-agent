@@ -49,18 +49,44 @@ export type SessionManagerOptions = {
   ringSize?: number;
   /** Environment for spawned children. */
   childEnv?: NodeJS.ProcessEnv;
+  /**
+   * Milliseconds to keep a terminated session's cursor alive so a slow
+   * SSE consumer can still read the final `_daemon/terminated` event.
+   * After this delay the cursor is closed and the entry removed from
+   * the registry. Default 30 000 ms. Tests override to small values.
+   */
+  terminatedGraceMs?: number;
+  /**
+   * Scheduler injection so tests can run the grace timer synchronously.
+   * Defaults to setTimeout / clearTimeout from the host.
+   */
+  scheduleTimer?: (handler: () => void, delayMs: number) => () => void;
 };
+
+export const DEFAULT_TERMINATED_GRACE_MS = 30_000;
 
 export class SessionManager {
   private readonly sessions = new Map<string, SessionState>();
   private readonly spawnChild: (opts: ChildHandleOptions) => ChildHandle;
   private readonly ringSize: number;
   private readonly childEnv: NodeJS.ProcessEnv | undefined;
+  private readonly terminatedGraceMs: number;
+  private readonly scheduleTimer: (handler: () => void, delayMs: number) => () => void;
+  private readonly graceCancels = new Map<string, () => void>();
 
   constructor(opts: SessionManagerOptions = {}) {
     this.spawnChild = opts.spawnChild ?? ((o) => new ChildHandle(o));
     this.ringSize = opts.ringSize ?? DEFAULT_RING_SIZE;
     this.childEnv = opts.childEnv;
+    this.terminatedGraceMs = opts.terminatedGraceMs ?? DEFAULT_TERMINATED_GRACE_MS;
+    this.scheduleTimer =
+      opts.scheduleTimer ??
+      ((handler, delayMs) => {
+        const t = setTimeout(handler, delayMs);
+        // Keep the daemon alive even with idle GC timers pending.
+        t.unref?.();
+        return () => clearTimeout(t);
+      });
   }
 
   /** Snapshot of currently-tracked sessions. */
@@ -145,8 +171,11 @@ export class SessionManager {
       } catch {
         // ignore
       }
-      // Keep the cursor open so a slow SSE consumer can still read the
-      // last events; we close it on terminate() / cleanup.
+      // Keep the cursor open briefly so a slow SSE consumer can still
+      // drain the final events, then GC the entry. Without this a
+      // long-running daemon would accumulate one stale state per
+      // crashed session indefinitely.
+      this.scheduleGrace(sessionId);
     });
 
     return { sessionId, newSessionResult: newResp.result };
@@ -241,6 +270,9 @@ export class SessionManager {
     const state = this.sessions.get(sessionId);
     if (!state) return;
     this.sessions.delete(sessionId);
+    // Cancel any pending grace timer; we are tearing down immediately.
+    this.graceCancels.get(sessionId)?.();
+    this.graceCancels.delete(sessionId);
     state.status = "terminated";
     state.cursor.close();
     await state.child.terminate();
@@ -250,6 +282,23 @@ export class SessionManager {
   async terminateAll(): Promise<void> {
     const ids = Array.from(this.sessions.keys());
     await Promise.all(ids.map((id) => this.terminate(id)));
+  }
+
+  /**
+   * Schedule cleanup of a terminated session after the grace window so
+   * the cursor + state don't linger forever after a child exit.
+   */
+  private scheduleGrace(sessionId: string): void {
+    // If another scheduler already ran (e.g. double-exit), keep the first.
+    if (this.graceCancels.has(sessionId)) return;
+    const cancel = this.scheduleTimer(() => {
+      this.graceCancels.delete(sessionId);
+      const state = this.sessions.get(sessionId);
+      if (!state) return;
+      this.sessions.delete(sessionId);
+      state.cursor.close();
+    }, this.terminatedGraceMs);
+    this.graceCancels.set(sessionId, cancel);
   }
 
   private requireAlive(sessionId: string): SessionState {

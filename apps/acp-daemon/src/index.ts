@@ -10,6 +10,7 @@ export {
   SessionNotFoundError,
   SessionTerminatedError,
   CursorLostError,
+  DEFAULT_TERMINATED_GRACE_MS,
   type SessionManagerOptions,
   type SessionState,
 } from "./session-manager";

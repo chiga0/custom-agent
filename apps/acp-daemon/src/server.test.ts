@@ -263,6 +263,28 @@ describe("daemon HTTP server", () => {
     ]);
   });
 
+  it("rejects when params.sessionId disagrees with X-ACP-Session-Id header (400)", async () => {
+    h = await startHarness({ childFactory: () => new FakeChild({ sessionId: "sess_OK" }) });
+    await fetch(`${h.baseUrl}/rpc`, {
+      method: "POST",
+      headers: authHeaders(h.token),
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "session/new" }),
+    });
+    const res = await fetch(`${h.baseUrl}/rpc`, {
+      method: "POST",
+      headers: authHeaders(h.token, { "X-ACP-Session-Id": "sess_OK" }),
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "session/prompt",
+        params: { sessionId: "sess_WRONG", prompt: [{ type: "text", text: "x" }] },
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/does not match/);
+  });
+
   it("returns 410 Gone for requests to a terminated session", async () => {
     h = await startHarness({ childFactory: () => new FakeChild({ sessionId: "sess_G" }) });
     await fetch(`${h.baseUrl}/rpc`, {

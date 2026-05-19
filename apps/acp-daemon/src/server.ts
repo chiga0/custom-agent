@@ -172,12 +172,11 @@ async function handleRpc(
 
   try {
     if (msg.method === "initialize") {
-      // Daemon-level initialize: forward to a temporary mental model.
-      // Per SPEC.md §6 this is optional; we always answer with the same
-      // baseline shape acp-server would advertise, so a daemon-level
-      // initialize before session/new is harmless. We don't spawn a
-      // child just for initialize — the child does its own initialize
-      // inside session/new (see SessionManager.createSession).
+      // Daemon-level initialize (SPEC.md §6): purely informational in M1.
+      // We echo the client's protocolVersion back so capability negotiation
+      // mirrors what the child later advertises, but the child itself is
+      // always spawned with protocolVersion: 1 in M1. Real per-session
+      // version threading is an M2 concern.
       respondJsonRpc(res, msg.id ?? null, {
         protocolVersion:
           (msg.params as { protocolVersion?: number } | undefined)?.protocolVersion ?? 1,
@@ -220,6 +219,18 @@ async function handleRpc(
     // All other methods are session-scoped.
     if (!sessionId) {
       respondJson(res, 400, { error: `missing ${SESSION_HEADER} header for ${msg.method}` });
+      return;
+    }
+
+    // SPEC.md §5: when the body carries `params.sessionId`, it must
+    // match the routing header. Mismatch is almost always a client bug
+    // (wrong header or stale prompt body); rejecting with 400 avoids
+    // logs where the routing target and the body identity disagree.
+    const bodySessionId = extractParamsSessionId(msg.params);
+    if (bodySessionId !== undefined && bodySessionId !== sessionId) {
+      respondJson(res, 400, {
+        error: `params.sessionId (${bodySessionId}) does not match ${SESSION_HEADER} (${sessionId})`,
+      });
       return;
     }
 
@@ -383,6 +394,12 @@ function respondJsonRpc(
     ? { jsonrpc: "2.0", id, error }
     : { jsonrpc: "2.0", id, result };
   res.end(JSON.stringify(body));
+}
+
+function extractParamsSessionId(params: unknown): string | undefined {
+  if (params === null || typeof params !== "object") return undefined;
+  const candidate = (params as { sessionId?: unknown }).sessionId;
+  return typeof candidate === "string" ? candidate : undefined;
 }
 
 async function readBody(req: IncomingMessage): Promise<string> {

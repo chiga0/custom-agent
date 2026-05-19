@@ -135,6 +135,13 @@ When the header names an unknown or terminated session:
 
 - `410 Gone` with body `{ "error": "session not found or terminated" }`.
 
+When the body carries `params.sessionId` AND it disagrees with the
+routing header, the daemon rejects with `400 Bad Request`. Routing
+identity and body identity must agree; otherwise the request is
+almost certainly a client bug (wrong header or stale body) and the
+daemon's logs would be misleading. Clients that prefer header-only
+addressing may simply omit `params.sessionId`.
+
 ## 6. session/new Handshake
 
 `session/new` is the only method that creates state in the daemon. The
@@ -144,19 +151,23 @@ flow:
 2. Daemon spawns one `apps/acp-server` child process.
 3. Daemon performs the embedded `initialize` handshake with the child
    over stdio (so the child is fully ready before user prompts arrive).
-   The protocolVersion the client passed in the daemon-level `initialize`
-   call is reused; if the client skipped daemon `initialize`, the daemon
-   defaults to protocolVersion 1.
+   In M1 the daemon always initializes the child with
+   `protocolVersion: 1`. The daemon-level `initialize` call is currently
+   stateless — it echoes the client's negotiated version back but does
+   not thread it into the child handshake. Real per-session version
+   negotiation lands with M2 when more than one protocol version exists.
 4. Daemon forwards `session/new` to the child as a JSON-RPC request,
    awaits the response, and returns the child's `sessionId` to the
    client in the HTTP body.
 5. Daemon remembers the mapping `sessionId → child handle` until the
    child exits or `terminate` is called.
 
-The daemon-level `initialize` call is OPTIONAL but recommended; if the
-client calls it before `session/new`, the daemon responds with the same
-`InitializeResponse` the child would produce, so the daemon-level
-capability negotiation matches what the child later advertises.
+The daemon-level `initialize` call is OPTIONAL; if the client calls it
+before `session/new`, the daemon responds with the same
+`InitializeResponse` the child would produce in M1, so the daemon-level
+capability negotiation matches what the child later advertises. The
+call is purely informational in M1 and does not influence child spawn
+parameters.
 
 ## 7. SSE Stream
 

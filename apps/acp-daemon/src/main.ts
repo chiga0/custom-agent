@@ -35,7 +35,16 @@ async function main(): Promise<void> {
 
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
     process.stderr.write(`acp-daemon: received ${signal}, shutting down\n`);
+    // SPEC.md §10: 5-second grace before force exit. If server.close()
+    // hangs (e.g. a child refuses to die), this ensures the daemon
+    // process terminates in bounded time.
+    const hardTimeout = setTimeout(() => {
+      process.stderr.write("acp-daemon: shutdown grace period exceeded; forcing exit\n");
+      process.exit(1);
+    }, 5_000);
+    hardTimeout.unref();
     await server.close();
+    clearTimeout(hardTimeout);
     process.exit(0);
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));
