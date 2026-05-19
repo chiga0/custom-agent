@@ -4,14 +4,16 @@ import type { AgentEvent } from "@custom-agent/schema";
 //
 // Normalizes AgentEvent streams into a deterministic, drift-detection-friendly
 // shape so that "same logical turn" produces byte-identical output across
-// runs. The projection strips:
-//   - identity fields (id, sessionId, turnId, eventId)
-//   - timing fields (timestamp, createdAt, startedAt, completedAt)
-//   - per-store ordering metadata (sequence)
-// and keeps:
-//   - the discriminator (type) — drift in event ordering breaks the golden
-//   - the surviving payload fields (e.g. promptPreview, text, stopReason),
-//     which are the actual contract that downstream code depends on.
+// runs.
+//
+// `normalizeEvents` projects each event to `{ type, payload }`. The envelope
+// fields that vary run-to-run (id, sessionId, turnId, sequence, timestamp,
+// schemaVersion) are dropped by virtue of the projection picking only
+// `type` and `payload`. The payload itself is passed through verbatim
+// (only key-sorted at serialization time) — we intentionally do NOT
+// recurse into payload to strip fields by name, because a future event
+// may legitimately use names like `id` in its payload (e.g. a tool-call
+// id) and silently dropping them would mask a real contract change.
 //
 // Output is a list of { type, payload } where payload keys are sorted so
 // JSON.stringify of two equivalent runs produces byte-identical strings.
@@ -20,18 +22,6 @@ export type NormalizedEvent = {
   readonly type: AgentEvent["type"];
   readonly payload: unknown;
 };
-
-const VOLATILE_FIELDS: ReadonlySet<string> = new Set([
-  "id",
-  "sessionId",
-  "turnId",
-  "eventId",
-  "timestamp",
-  "createdAt",
-  "startedAt",
-  "completedAt",
-  "sequence",
-]);
 
 /**
  * Project a stream of AgentEvent into a normalized, drift-detection shape.
@@ -42,14 +32,14 @@ const VOLATILE_FIELDS: ReadonlySet<string> = new Set([
 export function normalizeEvents(events: readonly AgentEvent[]): NormalizedEvent[] {
   return events.map((event) => ({
     type: event.type,
-    payload: stripVolatile(event.payload),
+    payload: event.payload,
   }));
 }
 
 /**
  * Returns a canonical JSON serialization of a normalized stream. Two streams
  * compare equal byte-for-byte iff they are logically equivalent under the
- * projection: same ordering, same types, same surviving payload fields.
+ * projection: same ordering, same types, same payload contents.
  *
  * The serialization uses sorted object keys at every depth so that, e.g.,
  * `{ stopReason: "final" }` and `{ stopReason: "final" }` from different
@@ -57,25 +47,6 @@ export function normalizeEvents(events: readonly AgentEvent[]): NormalizedEvent[
  */
 export function serializeNormalized(events: readonly NormalizedEvent[]): string {
   return `${JSON.stringify(events, sortedKeysReplacer, 2)}\n`;
-}
-
-function stripVolatile(value: unknown): unknown {
-  if (value === null || typeof value !== "object") {
-    return value;
-  }
-
-  if (Array.isArray(value)) {
-    return value.map(stripVolatile);
-  }
-
-  const out: Record<string, unknown> = {};
-  for (const key of Object.keys(value as Record<string, unknown>)) {
-    if (VOLATILE_FIELDS.has(key)) {
-      continue;
-    }
-    out[key] = stripVolatile((value as Record<string, unknown>)[key]);
-  }
-  return out;
 }
 
 // Recursive key-sort replacer for JSON.stringify. We cannot rely on insertion

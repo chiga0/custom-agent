@@ -63,10 +63,12 @@ describe("normalizeEvents", () => {
     expect(forward).not.toEqual(reverse);
   });
 
-  it("strips volatile fields recursively from nested payload objects", () => {
-    // Use a SessionCreatedEvent-shaped event with extra nested volatile keys
-    // injected to verify deep stripping. We coerce through unknown to test
-    // the projection's defensive behavior on future payload extensions.
+  it("preserves nested payload fields verbatim, including names that look like envelope keys", () => {
+    // The projection intentionally does NOT recurse into payload to strip
+    // fields by name. A future event may legitimately use a payload field
+    // called `id` (e.g. a tool-call id); silently dropping it would mask
+    // a real contract change. The envelope's own id/sessionId/etc are
+    // dropped via the `{type, payload}` projection shape, not by name.
     const event = {
       id: "evt_x",
       schemaVersion: 1,
@@ -77,7 +79,6 @@ describe("normalizeEvents", () => {
       payload: {
         cwd: "/tmp",
         client: "test",
-        // Hypothetical nested volatile fields.
         meta: { id: "nested_id", createdAt: "x", keep: "yes" },
       },
     } as unknown as AgentEvent;
@@ -90,7 +91,7 @@ describe("normalizeEvents", () => {
         payload: {
           cwd: "/tmp",
           client: "test",
-          meta: { keep: "yes" },
+          meta: { id: "nested_id", createdAt: "x", keep: "yes" },
         },
       },
     ]);

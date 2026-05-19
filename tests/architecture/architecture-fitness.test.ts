@@ -16,6 +16,7 @@ const aliasToPath: Record<string, string> = {
   "@custom-agent/cli": "apps/cli",
   "@custom-agent/core": "packages/core",
   "@custom-agent/permissions": "packages/permissions",
+  "@custom-agent/qa-fixtures": "packages/qa-fixtures",
   "@custom-agent/schema": "packages/schema",
   "@custom-agent/storage": "packages/storage",
   "@custom-agent/web-client": "apps/web-client",
@@ -46,6 +47,31 @@ const forbiddenEdges = [
     from: "apps/acp-daemon",
     to: "packages/core",
     reason: "daemon is a pure transport adapter; must not import core directly",
+  },
+  {
+    from: "packages/core",
+    to: "packages/qa-fixtures",
+    reason: "runtime packages must not depend on QA infrastructure",
+  },
+  {
+    from: "packages/schema",
+    to: "packages/qa-fixtures",
+    reason: "runtime packages must not depend on QA infrastructure",
+  },
+  {
+    from: "packages/storage",
+    to: "packages/qa-fixtures",
+    reason: "runtime packages must not depend on QA infrastructure",
+  },
+  {
+    from: "packages/permissions",
+    to: "packages/qa-fixtures",
+    reason: "runtime packages must not depend on QA infrastructure",
+  },
+  {
+    from: "apps/",
+    to: "packages/qa-fixtures",
+    reason: "client apps must not depend on QA infrastructure",
   },
 ];
 
