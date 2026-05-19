@@ -7,6 +7,7 @@
     { "path": "packages/permissions" },
     { "path": "apps/web-client" },
     { "path": "apps/cli" },
-    { "path": "apps/acp-server" }
+    { "path": "apps/acp-server" },
+    { "path": "apps/acp-daemon" }
   ]
 }

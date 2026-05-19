@@ -11,6 +11,7 @@ type ImportEdge = {
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 const aliasToPath: Record<string, string> = {
+  "@custom-agent/acp-daemon": "apps/acp-daemon",
   "@custom-agent/acp-server": "apps/acp-server",
   "@custom-agent/cli": "apps/cli",
   "@custom-agent/core": "packages/core",
@@ -40,6 +41,11 @@ const forbiddenEdges = [
     from: "apps/",
     to: "packages/storage/internal/",
     reason: "clients must not mutate session storage directly",
+  },
+  {
+    from: "apps/acp-daemon",
+    to: "packages/core",
+    reason: "daemon is a pure transport adapter; must not import core directly",
   },
 ];
 
