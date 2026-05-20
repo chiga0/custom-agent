@@ -15,6 +15,7 @@ const aliasToPath: Record<string, string> = {
   "@custom-agent/acp-server": "apps/acp-server",
   "@custom-agent/cli": "apps/cli",
   "@custom-agent/core": "packages/core",
+  "@custom-agent/model-gateway": "packages/model-gateway",
   "@custom-agent/permissions": "packages/permissions",
   "@custom-agent/qa-fixtures": "packages/qa-fixtures",
   "@custom-agent/schema": "packages/schema",
@@ -82,6 +83,27 @@ const forbiddenEdges = [
     from: "apps/",
     to: "packages/qa-fixtures",
     reason: "client apps must not depend on QA infrastructure",
+  },
+  {
+    from: "packages/core",
+    to: "packages/model-gateway",
+    reason:
+      "core defines the ModelProvider port; concrete adapters live in model-gateway and must depend on core, not the reverse",
+  },
+  {
+    from: "packages/schema",
+    to: "packages/model-gateway",
+    reason: "schema is leaf; provider adapters depend on schema, not the reverse",
+  },
+  {
+    from: "packages/storage",
+    to: "packages/model-gateway",
+    reason: "storage must not couple to provider adapters",
+  },
+  {
+    from: "packages/permissions",
+    to: "packages/model-gateway",
+    reason: "permission engine must not couple to provider adapters",
   },
 ];
 

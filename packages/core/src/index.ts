@@ -31,6 +31,7 @@ export type {
   ModelRequest,
   ModelStreamEvent,
   ModelUsage,
+  PreflightResult,
 } from "./ports/model-provider";
 
 export type { EventStore } from "./ports/event-store";
