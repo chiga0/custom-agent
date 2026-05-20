@@ -49,6 +49,16 @@ const forbiddenEdges = [
     reason: "daemon is a pure transport adapter; must not import core directly",
   },
   {
+    from: "apps/web-client",
+    to: "packages/core",
+    reason: "web client speaks only ACP wire; must not import core directly",
+  },
+  {
+    from: "apps/web-client",
+    to: "packages/storage",
+    reason: "web client must not depend on storage adapters",
+  },
+  {
     from: "packages/core",
     to: "packages/qa-fixtures",
     reason: "runtime packages must not depend on QA infrastructure",

@@ -143,6 +143,16 @@ async function loadSavedSession(): Promise<void> {
   }
 }
 
+function endSession(): void {
+  if (!state.sessionId) {
+    setStatus("No session to end.");
+    return;
+  }
+  const ended = state.sessionId;
+  resetSessionState();
+  setStatus(`Disconnected from session ${ended}. Daemon-side session continues running.`);
+}
+
 async function sendPrompt(): Promise<void> {
   if (!state.config || !state.sessionId) {
     setStatus("Start or load a session before sending a prompt.");
@@ -230,6 +240,7 @@ function render(): void {
           <span class="sep">or</span>
           <label>Load by id <input id="load-session-id" type="text" placeholder="sess_..." /></label>
           <button id="btn-load" type="button">Load</button>
+          <button id="btn-end" type="button" class="btn-secondary">End session</button>
         </div>
       </section>
 
@@ -258,6 +269,9 @@ function render(): void {
   });
   document.querySelector<HTMLButtonElement>("#btn-prompt")?.addEventListener("click", () => {
     void sendPrompt();
+  });
+  document.querySelector<HTMLButtonElement>("#btn-end")?.addEventListener("click", () => {
+    endSession();
   });
 
   rerenderTranscript();

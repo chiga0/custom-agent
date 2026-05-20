@@ -113,6 +113,16 @@ button:hover {
   background: #1d4ed8;
 }
 
+button.btn-secondary {
+  background: white;
+  color: #475569;
+  border-color: #cbd5e1;
+}
+
+button.btn-secondary:hover {
+  background: #f8fafc;
+}
+
 code {
   background: #eef2ff;
   padding: 2px 6px;

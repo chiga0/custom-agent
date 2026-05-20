@@ -11,6 +11,10 @@ import { DaemonError, loadSession, newSession, prompt, subscribe } from "./daemo
 
 const config = { baseUrl: "http://daemon.test", authToken: "secret" };
 
+beforeEach(() => {
+  vi.stubGlobal("fetch", vi.fn());
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -27,10 +31,6 @@ function mockTextResponse(body: string, status: number): Response {
 }
 
 describe("newSession / loadSession / prompt", () => {
-  beforeEach(() => {
-    vi.stubGlobal("fetch", vi.fn());
-  });
-
   it("newSession posts session/new with bearer auth + JSON content-type", async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockResolvedValueOnce(
@@ -128,10 +128,6 @@ describe("newSession / loadSession / prompt", () => {
 });
 
 describe("subscribe (SSE)", () => {
-  beforeEach(() => {
-    vi.stubGlobal("fetch", vi.fn());
-  });
-
   function sseResponse(chunks: string[]): Response {
     const encoded = chunks.map((c) => new TextEncoder().encode(c));
     let i = 0;
