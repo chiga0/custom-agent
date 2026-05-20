@@ -478,6 +478,109 @@ describe("daemon HTTP server", () => {
       expect(events[0].data).toContain(`"unique_${i}"`);
     });
   });
+
+  it("session/load spawns a child, registers under client sessionId, and SSE replays buffered updates", async () => {
+    // The fake child fires two session/update notifications during its
+    // loadSession handler; those must reach the cursor BEFORE the SSE
+    // client attaches, because the listener was wired pre-request.
+    const targetId = "sess_LOAD_1";
+    let boundChild: FakeChild | null = null;
+    const child = new FakeChild({
+      sessionId: targetId,
+      responses: {
+        "session/load": async () => {
+          boundChild?.emitNotification({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: targetId,
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "L1" },
+              },
+            },
+          });
+          boundChild?.emitNotification({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: targetId,
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "L2" },
+              },
+            },
+          });
+          return { jsonrpc: "2.0", id: 99, result: {} };
+        },
+      },
+    });
+    boundChild = child;
+    h = await startHarness({ childFactory: () => child });
+
+    const res = await fetch(`${h.baseUrl}/rpc`, {
+      method: "POST",
+      headers: authHeaders(h.token),
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "session/load",
+        params: { sessionId: targetId, cwd: "/tmp", mcpServers: [] },
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as JsonRpcMessage;
+    expect(body.id).toBe(1);
+    expect(body.result).toEqual({});
+
+    // Now attach to /events; the cursor should already hold the two
+    // replayed notifications.
+    const ac = new AbortController();
+    const sseRes = await fetch(`${h.baseUrl}/events`, {
+      headers: { Authorization: `Bearer ${h.token}`, "X-ACP-Session-Id": targetId },
+      signal: ac.signal,
+    });
+    const events = await readSseEvents(sseRes, 2, ac);
+    expect(events.map((e) => e.id)).toEqual([1, 2]);
+    expect(events[0].data).toContain('"L1"');
+    expect(events[1].data).toContain('"L2"');
+  });
+
+  it("session/load rejects body without params.sessionId (400 -32602)", async () => {
+    h = await startHarness({ childFactory: () => new FakeChild({ sessionId: "_" }) });
+    const res = await fetch(`${h.baseUrl}/rpc`, {
+      method: "POST",
+      headers: authHeaders(h.token),
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "session/load",
+        params: { cwd: "/tmp", mcpServers: [] },
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as JsonRpcMessage;
+    expect(body.error?.code).toBe(-32602);
+    expect(body.error?.message).toMatch(/params\.sessionId/);
+  });
+
+  it("session/load rejects when X-ACP-Session-Id header is present (400 -32602)", async () => {
+    h = await startHarness({ childFactory: () => new FakeChild({ sessionId: "_" }) });
+    const res = await fetch(`${h.baseUrl}/rpc`, {
+      method: "POST",
+      headers: authHeaders(h.token, { "X-ACP-Session-Id": "sess_X" }),
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "session/load",
+        params: { sessionId: "sess_X", cwd: "/tmp", mcpServers: [] },
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as JsonRpcMessage;
+    expect(body.error?.code).toBe(-32602);
+    expect(body.error?.message).toMatch(/must not carry/);
+  });
 });
 
 type SseEvent = { id: number; event?: string; data: string };

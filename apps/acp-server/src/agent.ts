@@ -10,6 +10,8 @@ import type {
   ContentBlock,
   InitializeRequest,
   InitializeResponse,
+  LoadSessionRequest,
+  LoadSessionResponse,
   NewSessionRequest,
   NewSessionResponse,
   PromptRequest,
@@ -65,16 +67,24 @@ export type CustomAgentOptions = {
 export class CustomAgent implements Agent {
   private readonly conn: Pick<AgentSideConnection, "sessionUpdate">;
   private readonly engine: SessionEngine;
+  // The store reference is kept independently so loadSession can replay
+  // events without going through SessionEngine (replay is read-only and
+  // does not need the state machine).
+  private readonly store: EventStore;
   private sessionId: string | undefined;
+  // True after loadSession: the process owns the sessionId only for the
+  // replay; subsequent session/prompt has no in-memory engine state and
+  // must be rejected until "resume" lands (see loadSession docs below).
+  private replayOnly = false;
 
   constructor(options: CustomAgentOptions) {
     this.conn = options.conn;
-    const store =
+    this.store =
       options.eventStore ?? new JsonlSessionStore(resolveEventLogRoot(options.eventLogRoot));
     const provider = options.provider ?? new FakeStreamingProvider();
 
     this.engine = new SessionEngine({
-      eventStore: store,
+      eventStore: this.store,
       provider,
       now: options.now,
       createId: options.createId,
@@ -87,7 +97,12 @@ export class CustomAgent implements Agent {
       protocolVersion: ACP_PROTOCOL_VERSION,
       agentInfo: { name: "Custom Agent", version: "0.1.0" },
       agentCapabilities: {
-        loadSession: false,
+        // M1-04 enabled: loadSession replays a persisted session's
+        // session/update notifications from the JSONL event log. The
+        // log root is shared across acp-server processes via the
+        // ACP_EVENT_LOG_ROOT environment variable so that the
+        // replay-child sees the same file the writer-child appended to.
+        loadSession: true,
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
         mcpCapabilities: { http: false, sse: false },
       },
@@ -119,9 +134,73 @@ export class CustomAgent implements Agent {
     return { sessionId: session.sessionId };
   }
 
+  async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
+    if (this.sessionId) {
+      throw new Error(
+        "This acp-server process already owns a session; spawn a new process for loadSession",
+      );
+    }
+    // M1-04: replay-only. We do not reconstruct SessionEngine state from
+    // events here — that is the "resume" semantic, which ACP exposes
+    // separately. Until M1-WEB-01 actually depends on resume, loadSession
+    // strictly re-emits the historical session/update notifications and
+    // returns. Subsequent session/prompt on this process is rejected.
+    //
+    // M1 ignores params.mcpServers (M6 connects MCP). cwd / additionalDirectories
+    // are recorded only as the client's context for the replay — they are not
+    // persisted because the original session.created event already pinned
+    // the writer-side cwd.
+    void params.cwd;
+    void params.mcpServers;
+
+    this.sessionId = params.sessionId;
+    this.replayOnly = true;
+    let emitted = 0;
+    let sawSessionCreated = false;
+    try {
+      for await (const event of this.store.replay(params.sessionId)) {
+        if (event.type === "session.created") {
+          sawSessionCreated = true;
+        }
+        const update = mapEventToUpdate(event);
+        if (!update) continue;
+        await this.conn.sessionUpdate({
+          sessionId: params.sessionId,
+          update,
+        });
+        emitted += 1;
+      }
+    } catch (error) {
+      // Surface as ACP error. The SDK wraps thrown errors into JSON-RPC
+      // INTERNAL_ERROR; clients should treat this as "replay failed,
+      // session log unavailable".
+      const cause = error instanceof Error ? error.message : String(error);
+      throw new Error(`session/load replay failed for ${params.sessionId}: ${cause}`);
+    }
+
+    if (!sawSessionCreated) {
+      // No session.created event means we never saw a writer for this
+      // sessionId. Treat as "session not found" rather than silently
+      // returning an empty replay.
+      throw new Error(`session/load: no such session ${params.sessionId}`);
+    }
+
+    void emitted;
+    return {};
+  }
+
   async prompt(params: PromptRequest): Promise<PromptResponse> {
     if (params.sessionId !== this.sessionId) {
       throw new Error(`Unknown sessionId: ${params.sessionId}`);
+    }
+    if (this.replayOnly) {
+      // After loadSession the in-memory engine state is empty. Resuming a
+      // loaded session needs ACP's `resume` semantic (event replay into the
+      // engine state machine), which is not part of M1-04 scope.
+      throw new Error(
+        `session ${params.sessionId} was loaded for replay only; ` +
+          `prompt is not supported until session resume lands`,
+      );
     }
 
     const userText = extractPromptText(params.prompt);

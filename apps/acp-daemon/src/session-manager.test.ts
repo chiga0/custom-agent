@@ -350,6 +350,116 @@ describe("SessionManager", () => {
     expect(manager.list()).toHaveLength(0);
   });
 
+  it("loadSession spawns child, runs initialize + session/load, registers under client sessionId", async () => {
+    const targetId = "sess_load_1";
+    // The child emits session/update notifications synchronously DURING
+    // the session/load handler — that's the whole point of replay. Use a
+    // handler that pushes notifications via emitNotification BEFORE
+    // returning the response.
+    let bound: FakeChildHandle | null = null;
+    const child = makeChild(async (method) => {
+      if (method === "initialize") {
+        return { jsonrpc: "2.0", id: 1, result: { protocolVersion: 1 } };
+      }
+      if (method === "session/load") {
+        bound?.emitNotification({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: targetId,
+            update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "a" } },
+          },
+        });
+        bound?.emitNotification({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: targetId,
+            update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "b" } },
+          },
+        });
+        return { jsonrpc: "2.0", id: 2, result: {} };
+      }
+      return { jsonrpc: "2.0", id: 99, error: { code: -32601, message: "method not found" } };
+    });
+    bound = child;
+    children.push(child);
+    const manager = new SessionManager({
+      spawnChild: () => child as unknown as ChildHandle,
+    });
+    const result = await manager.loadSession({
+      initializeParams: { protocolVersion: 1 },
+      loadSessionParams: { sessionId: targetId, cwd: "/tmp", mcpServers: [] },
+    });
+    expect(result.sessionId).toBe(targetId);
+    expect(manager.get(targetId)?.status).toBe("alive");
+    // Cursor should already hold the 2 replayed notifications because
+    // the listener was wired BEFORE session/load was issued.
+    expect(manager.get(targetId)?.cursor.latest).toBe(2);
+  });
+
+  it("loadSession rejects when sessionId is missing", async () => {
+    const child = makeChild(standardHandler("unused"));
+    children.push(child);
+    const manager = new SessionManager({
+      spawnChild: () => child as unknown as ChildHandle,
+    });
+    await expect(
+      manager.loadSession({
+        initializeParams: { protocolVersion: 1 },
+        loadSessionParams: { sessionId: "" },
+      }),
+    ).rejects.toThrow(/non-empty/);
+  });
+
+  it("loadSession refuses to re-load a session already alive in the manager", async () => {
+    const targetId = "sess_dup";
+    const child1 = makeChild(async (method) => {
+      if (method === "initialize") return { jsonrpc: "2.0", id: 1, result: { protocolVersion: 1 } };
+      if (method === "session/load") return { jsonrpc: "2.0", id: 2, result: {} };
+      return { jsonrpc: "2.0", id: 99, error: { code: -32601, message: "no" } };
+    });
+    children.push(child1);
+    const queue = [child1];
+    const manager = new SessionManager({
+      spawnChild: () => queue.shift()! as unknown as ChildHandle,
+    });
+    await manager.loadSession({
+      initializeParams: { protocolVersion: 1 },
+      loadSessionParams: { sessionId: targetId, cwd: "/tmp", mcpServers: [] },
+    });
+    await expect(
+      manager.loadSession({
+        initializeParams: { protocolVersion: 1 },
+        loadSessionParams: { sessionId: targetId, cwd: "/tmp", mcpServers: [] },
+      }),
+    ).rejects.toThrow(/already loaded/);
+  });
+
+  it("loadSession cleans up the daemon entry when the child returns an error", async () => {
+    const targetId = "sess_err";
+    const child = makeChild(async (method) => {
+      if (method === "initialize") return { jsonrpc: "2.0", id: 1, result: { protocolVersion: 1 } };
+      if (method === "session/load") {
+        return { jsonrpc: "2.0", id: 2, error: { code: -32603, message: "no such session" } };
+      }
+      return { jsonrpc: "2.0", id: 99, error: { code: -32601, message: "no" } };
+    });
+    children.push(child);
+    const manager = new SessionManager({
+      spawnChild: () => child as unknown as ChildHandle,
+    });
+    await expect(
+      manager.loadSession({
+        initializeParams: { protocolVersion: 1 },
+        loadSessionParams: { sessionId: targetId, cwd: "/tmp", mcpServers: [] },
+      }),
+    ).rejects.toThrow(/no such session/);
+    // Failed load must NOT leave an entry behind in the registry.
+    expect(manager.get(targetId)).toBeUndefined();
+    expect(child.isExited).toBe(true);
+  });
+
   it("terminateAll removes every session and kills children", async () => {
     const childA = makeChild(standardHandler("s_X"));
     const childB = makeChild(standardHandler("s_Y"));

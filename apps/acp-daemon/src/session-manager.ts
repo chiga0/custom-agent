@@ -42,6 +42,23 @@ export type CreateSessionResult = {
   newSessionResult: unknown;
 };
 
+export type LoadSessionInput = {
+  initializeParams: { protocolVersion: number; [key: string]: unknown };
+  /**
+   * session/load params from the client. MUST include `sessionId` — unlike
+   * createSession, the client picks the id (it is the id of a previously
+   * recorded session). The child opens its persisted JSONL by that id.
+   */
+  loadSessionParams: { sessionId: string; [key: string]: unknown };
+};
+
+export type LoadSessionResult = {
+  /** Same id the client passed in. */
+  sessionId: string;
+  /** Original JSON-RPC result for session/load (for proxying back). */
+  loadSessionResult: unknown;
+};
+
 export type SessionManagerOptions = {
   /** Override for tests — produce a ChildHandle without spawning. */
   spawnChild?: (opts: ChildHandleOptions) => ChildHandle;
@@ -179,6 +196,100 @@ export class SessionManager {
     });
 
     return { sessionId, newSessionResult: newResp.result };
+  }
+
+  /**
+   * Spawn a fresh child, perform `initialize` + `session/load`, register
+   * the session under the client-supplied sessionId, and return the child's
+   * `session/load` response.
+   *
+   * Unlike createSession, the cursor + notification listener are wired BEFORE
+   * the `session/load` request. The acp-server emits `session/update`
+   * notifications synchronously during the loadSession handler (one per
+   * mapped historical event); if we attached the listener after the
+   * response, every replayed update would be silently dropped before the
+   * SSE client could attach.
+   */
+  async loadSession(input: LoadSessionInput): Promise<LoadSessionResult> {
+    const { sessionId } = input.loadSessionParams;
+    if (typeof sessionId !== "string" || sessionId.length === 0) {
+      throw new Error("session/load requires a non-empty params.sessionId");
+    }
+    if (this.sessions.has(sessionId)) {
+      throw new Error(`session/load: ${sessionId} is already loaded or active in this daemon`);
+    }
+
+    const child = this.spawnChild({ env: this.childEnv });
+
+    // Wire cursor + listeners FIRST so notifications emitted during the
+    // session/load handler (which is the entire point of replay) are not
+    // dropped between request issue and response receipt.
+    const cursor = new SessionCursor(this.ringSize);
+    const state: SessionState = { sessionId, child, cursor, status: "alive" };
+    this.sessions.set(sessionId, state);
+
+    child.on("notification", (msg) => {
+      if (state.status !== "alive") return;
+      try {
+        cursor.push(JSON.stringify(msg));
+      } catch {
+        // Cursor closed concurrently with a notification; harmless.
+      }
+    });
+
+    child.on("exit", (info) => {
+      state.status = "terminated";
+      state.terminationReason = `child_exited(code=${info.code}, signal=${info.signal})`;
+      try {
+        cursor.push(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            method: "_daemon/terminated",
+            params: { sessionId, reason: state.terminationReason },
+          }),
+        );
+      } catch {
+        // ignore
+      }
+      this.scheduleGrace(sessionId);
+    });
+
+    // Cleanup helper for the early-failure path: tear down the registered
+    // state synchronously so a failed loadSession leaves no residue.
+    const cleanup = async (): Promise<void> => {
+      this.sessions.delete(sessionId);
+      this.graceCancels.get(sessionId)?.();
+      this.graceCancels.delete(sessionId);
+      state.status = "terminated";
+      cursor.close();
+      await child.terminate();
+    };
+
+    let initResp: JsonRpcMessage;
+    try {
+      initResp = await child.request("initialize", input.initializeParams);
+    } catch (err) {
+      await cleanup();
+      throw err;
+    }
+    if (initResp.error) {
+      await cleanup();
+      throw new Error(`child initialize failed: ${initResp.error.message}`);
+    }
+
+    let loadResp: JsonRpcMessage;
+    try {
+      loadResp = await child.request("session/load", input.loadSessionParams);
+    } catch (err) {
+      await cleanup();
+      throw err;
+    }
+    if (loadResp.error) {
+      await cleanup();
+      throw new Error(`child session/load failed: ${loadResp.error.message}`);
+    }
+
+    return { sessionId, loadSessionResult: loadResp.result ?? {} };
   }
 
   /** Forward a request frame to the child. Returns the child's response. */

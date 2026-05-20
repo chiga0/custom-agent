@@ -110,6 +110,7 @@ Routing rules:
 | ---------------- | ----------------------- | ------------------------------- |
 | `initialize`     | No                      | Embedded handshake (see §6)     |
 | `session/new`    | No                      | Spawned child after handshake   |
+| `session/load`   | No (id is in params)    | Spawned child after handshake   |
 | `session/prompt` | Yes                     | Existing child for that session |
 | `session/cancel` | Yes (notification)      | Existing child as notification  |
 | `authenticate`   | Optional                | Embedded (returns empty result) |
@@ -142,10 +143,14 @@ almost certainly a client bug (wrong header or stale body) and the
 daemon's logs would be misleading. Clients that prefer header-only
 addressing may simply omit `params.sessionId`.
 
-## 6. session/new Handshake
+## 6. session/new and session/load Handshakes
 
-`session/new` is the only method that creates state in the daemon. The
-flow:
+Two methods create state in the daemon: `session/new` (live, fresh) and
+`session/load` (replay an existing on-disk session). Both spawn a fresh
+`apps/acp-server` child and run an embedded `initialize` before
+forwarding the high-level request.
+
+### 6.1 session/new
 
 1. Client POSTs `session/new` (no session header).
 2. Daemon spawns one `apps/acp-server` child process.
@@ -168,6 +173,45 @@ before `session/new`, the daemon responds with the same
 capability negotiation matches what the child later advertises. The
 call is purely informational in M1 and does not influence child spawn
 parameters.
+
+### 6.2 session/load (replay)
+
+`session/load` resurrects an existing on-disk session and re-emits its
+historical `session/update` notifications. The client supplies the
+sessionId in the request body (NOT the header). Flow:
+
+1. Client POSTs `session/load` with `params.sessionId` (no session
+   header).
+2. Daemon spawns a fresh `apps/acp-server` child process, passing
+   `ACP_EVENT_LOG_ROOT` via env so the child can find the persisted
+   JSONL log written earlier by the original writer process.
+3. Daemon wires the cursor + notification listener BEFORE issuing
+   `session/load` — the child's `loadSession` handler synchronously
+   emits one `session/update` per mapped historical AgentEvent, and
+   those notifications must land in the cursor (so SSE consumers can
+   read them) rather than be dropped between request issue and response
+   receipt.
+4. Daemon runs the embedded `initialize` (same as §6.1).
+5. Daemon forwards `session/load` to the child as a JSON-RPC request.
+   The child reads its JSONL, emits `session/update` notifications via
+   stdio, then returns an empty `LoadSessionResponse`.
+6. Daemon returns the empty response to the client. The client may now
+   attach to `GET /events` with `X-ACP-Session-Id` set to the loaded id
+   and replay the buffered notifications.
+
+The daemon refuses to load a sessionId that is already alive in this
+daemon process — concurrent writer+replay over the same JSONL is not
+supported in M1 (each acp-server child opens the log fresh). Subsequent
+`session/prompt` on a loaded session is rejected by acp-server because
+the in-memory engine state was not reconstructed; this is the
+"replay-only" semantic. Resuming a loaded session (engine state
+reconstruction) is reserved for a future "resume" semantic.
+
+The shared event log root is set via the `ACP_EVENT_LOG_ROOT`
+environment variable on the daemon process. When unset the daemon
+mkdtemps a per-process directory and propagates it to every spawned
+child; that mode supports cross-process load WITHIN one daemon lifetime
+but not across daemon restarts.
 
 ## 7. SSE Stream
 
