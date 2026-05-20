@@ -152,13 +152,16 @@ export class CustomAgent implements Agent {
     // the writer-side cwd.
     void params.cwd;
     void params.mcpServers;
+    void params.additionalDirectories;
 
     this.sessionId = params.sessionId;
     this.replayOnly = true;
     let emitted = 0;
+    let scanned = 0;
     let sawSessionCreated = false;
     try {
       for await (const event of this.store.replay(params.sessionId)) {
+        scanned += 1;
         if (event.type === "session.created") {
           sawSessionCreated = true;
         }
@@ -185,7 +188,14 @@ export class CustomAgent implements Agent {
       throw new Error(`session/load: no such session ${params.sessionId}`);
     }
 
-    void emitted;
+    // Diagnostic: the daemon has no other view into how many events a
+    // replay actually shipped. Stderr is the only side-channel the SDK
+    // leaves available to the agent process; the daemon does not parse
+    // child stderr, so emitting one line per loadSession is safe.
+    process.stderr.write(
+      `acp-server: session/load ${params.sessionId} replayed ${emitted}/${scanned} events\n`,
+    );
+
     return {};
   }
 

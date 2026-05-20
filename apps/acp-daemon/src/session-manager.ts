@@ -153,47 +153,7 @@ export class SessionManager {
       throw new Error("child session/new returned no sessionId");
     }
 
-    const cursor = new SessionCursor(this.ringSize);
-    const state: SessionState = { sessionId, child, cursor, status: "alive" };
-    this.sessions.set(sessionId, state);
-
-    // Wire child notifications → cursor. Only session/update notifications
-    // are persisted to the SSE stream; the daemon does not invent its own
-    // notification methods so any other method passed through is a
-    // forward-compatibility courtesy.
-    child.on("notification", (msg) => {
-      if (state.status !== "alive") return;
-      try {
-        cursor.push(JSON.stringify(msg));
-      } catch {
-        // Cursor closed concurrently with a notification; harmless.
-      }
-    });
-
-    child.on("exit", (info) => {
-      state.status = "terminated";
-      state.terminationReason = `child_exited(code=${info.code}, signal=${info.signal})`;
-      // Push a final synthetic event so any subscribed SSE stream sees
-      // the termination and the response handler in server.ts can emit
-      // `event: terminated`. We tag it with a method the daemon owns to
-      // avoid colliding with ACP-defined methods.
-      try {
-        cursor.push(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            method: "_daemon/terminated",
-            params: { sessionId, reason: state.terminationReason },
-          }),
-        );
-      } catch {
-        // ignore
-      }
-      // Keep the cursor open briefly so a slow SSE consumer can still
-      // drain the final events, then GC the entry. Without this a
-      // long-running daemon would accumulate one stale state per
-      // crashed session indefinitely.
-      this.scheduleGrace(sessionId);
-    });
+    this.registerSession(sessionId, child);
 
     return { sessionId, newSessionResult: newResp.result };
   }
@@ -215,8 +175,17 @@ export class SessionManager {
     if (typeof sessionId !== "string" || sessionId.length === 0) {
       throw new Error("session/load requires a non-empty params.sessionId");
     }
-    if (this.sessions.has(sessionId)) {
-      throw new Error(`session/load: ${sessionId} is already loaded or active in this daemon`);
+    const existing = this.sessions.get(sessionId);
+    if (existing) {
+      if (existing.status === "alive") {
+        throw new Error(`session/load: ${sessionId} is already alive in this daemon`);
+      }
+      // A terminated entry can still be in the registry during the
+      // grace window. A client asking to load this session is implicitly
+      // done watching the live stream — eagerly GC the stale entry so
+      // the load can proceed instead of returning a confusing
+      // "already loaded" error to a perfectly reasonable request.
+      await this.terminate(sessionId);
     }
 
     const child = this.spawnChild({ env: this.childEnv });
@@ -224,35 +193,7 @@ export class SessionManager {
     // Wire cursor + listeners FIRST so notifications emitted during the
     // session/load handler (which is the entire point of replay) are not
     // dropped between request issue and response receipt.
-    const cursor = new SessionCursor(this.ringSize);
-    const state: SessionState = { sessionId, child, cursor, status: "alive" };
-    this.sessions.set(sessionId, state);
-
-    child.on("notification", (msg) => {
-      if (state.status !== "alive") return;
-      try {
-        cursor.push(JSON.stringify(msg));
-      } catch {
-        // Cursor closed concurrently with a notification; harmless.
-      }
-    });
-
-    child.on("exit", (info) => {
-      state.status = "terminated";
-      state.terminationReason = `child_exited(code=${info.code}, signal=${info.signal})`;
-      try {
-        cursor.push(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            method: "_daemon/terminated",
-            params: { sessionId, reason: state.terminationReason },
-          }),
-        );
-      } catch {
-        // ignore
-      }
-      this.scheduleGrace(sessionId);
-    });
+    const state = this.registerSession(sessionId, child);
 
     // Cleanup helper for the early-failure path: tear down the registered
     // state synchronously so a failed loadSession leaves no residue.
@@ -261,7 +202,7 @@ export class SessionManager {
       this.graceCancels.get(sessionId)?.();
       this.graceCancels.delete(sessionId);
       state.status = "terminated";
-      cursor.close();
+      state.cursor.close();
       await child.terminate();
     };
 
@@ -393,6 +334,49 @@ export class SessionManager {
   async terminateAll(): Promise<void> {
     const ids = Array.from(this.sessions.keys());
     await Promise.all(ids.map((id) => this.terminate(id)));
+  }
+
+  /**
+   * Allocate a SessionCursor, wire the child's notification + exit
+   * listeners to it, and insert the SessionState into the registry.
+   * Used by both createSession (after session/new returns) and
+   * loadSession (BEFORE session/load is issued, since replay
+   * notifications come synchronously during that call).
+   */
+  private registerSession(sessionId: string, child: ChildHandle): SessionState {
+    const cursor = new SessionCursor(this.ringSize);
+    const state: SessionState = { sessionId, child, cursor, status: "alive" };
+    this.sessions.set(sessionId, state);
+
+    child.on("notification", (msg) => {
+      if (state.status !== "alive") return;
+      try {
+        cursor.push(JSON.stringify(msg));
+      } catch {
+        // Cursor closed concurrently with a notification; harmless.
+      }
+    });
+
+    child.on("exit", (info) => {
+      state.status = "terminated";
+      state.terminationReason = `child_exited(code=${info.code}, signal=${info.signal})`;
+      // Push a final synthetic event so any subscribed SSE stream sees
+      // the termination and server.ts can emit `event: terminated`.
+      try {
+        cursor.push(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            method: "_daemon/terminated",
+            params: { sessionId, reason: state.terminationReason },
+          }),
+        );
+      } catch {
+        // ignore
+      }
+      this.scheduleGrace(sessionId);
+    });
+
+    return state;
   }
 
   /**

@@ -433,7 +433,41 @@ describe("SessionManager", () => {
         initializeParams: { protocolVersion: 1 },
         loadSessionParams: { sessionId: targetId, cwd: "/tmp", mcpServers: [] },
       }),
-    ).rejects.toThrow(/already loaded/);
+    ).rejects.toThrow(/already alive/);
+  });
+
+  it("loadSession eagerly GCs a terminated entry instead of rejecting (post-grace race)", async () => {
+    const targetId = "sess_terminated_then_load";
+    const loadHandler: RequestHandler = async (method) => {
+      if (method === "initialize") return { jsonrpc: "2.0", id: 1, result: { protocolVersion: 1 } };
+      if (method === "session/load") return { jsonrpc: "2.0", id: 2, result: {} };
+      return { jsonrpc: "2.0", id: 99, error: { code: -32601, message: "no" } };
+    };
+    const childA = makeChild(loadHandler);
+    const childB = makeChild(loadHandler);
+    children.push(childA, childB);
+    const queue = [childA, childB];
+    const manager = new SessionManager({
+      spawnChild: () => queue.shift()! as unknown as ChildHandle,
+    });
+    // First load registers `targetId` in the alive map.
+    await manager.loadSession({
+      initializeParams: { protocolVersion: 1 },
+      loadSessionParams: { sessionId: targetId, cwd: "/tmp", mcpServers: [] },
+    });
+    // Simulate the writer/replay child exiting; the entry stays in the
+    // registry as `terminated` until the grace timer fires.
+    childA.simulateCrash(0);
+    expect(manager.get(targetId)?.status).toBe("terminated");
+
+    // A second loadSession for the SAME id during the grace window must
+    // succeed — eager GC of the stale entry per Round 1 P2 #1.
+    const second = await manager.loadSession({
+      initializeParams: { protocolVersion: 1 },
+      loadSessionParams: { sessionId: targetId, cwd: "/tmp", mcpServers: [] },
+    });
+    expect(second.sessionId).toBe(targetId);
+    expect(manager.get(targetId)?.status).toBe("alive");
   });
 
   it("loadSession cleans up the daemon entry when the child returns an error", async () => {
