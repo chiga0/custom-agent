@@ -60,7 +60,7 @@ describe("CustomAgent (ACP Agent interface)", () => {
     const res = await agent.initialize({ protocolVersion: 1 });
     expect(res.protocolVersion).toBe(ACP_PROTOCOL_VERSION);
     expect(res.agentCapabilities).toMatchObject({
-      loadSession: false,
+      loadSession: true,
       promptCapabilities: { image: false, audio: false, embeddedContext: false },
       mcpCapabilities: { http: false, sse: false },
     });
@@ -248,6 +248,88 @@ describe("CustomAgent (ACP Agent interface)", () => {
     expect(res.stopReason).toBe<StopReason>("refusal");
   });
 });
+
+// M1-04: loadSession replays a persisted session's session/update
+// notifications. The strongest test pairs a writer Agent (newSession +
+// prompt) and a separate reader Agent (loadSession over the SAME store),
+// asserting that the reader's emitted notifications exactly equal the
+// writer's notifications. That mirrors how the daemon will use a
+// separately-spawned acp-server child to replay.
+describe("CustomAgent.loadSession (M1-04 replay)", () => {
+  it("re-emits the writer's session/update notifications in order", async () => {
+    const store = new InMemoryStore();
+    // Writer agent: run a turn so the store gets populated.
+    const { agent: writer, conn: writerConn } = makeAgent({
+      provider: new FakeStreamingProvider({ chunks: ["Hello, ", "world."] }),
+      store,
+    });
+    const { sessionId } = await writer.newSession({ cwd: "/tmp", mcpServers: [] });
+    await writer.prompt({ sessionId, prompt: [text("hi")] });
+
+    // Reader agent: fresh CustomAgent over the SAME store; only loadSession.
+    const reader = new CustomAgent({
+      conn: new NotificationCollector(),
+      eventStore: store,
+    });
+    const readerConn = (reader as unknown as { conn: NotificationCollector }).conn;
+    const res = await reader.loadSession({
+      cwd: "/tmp",
+      mcpServers: [],
+      sessionId,
+    });
+
+    expect(res).toEqual({});
+    // The reader must emit exactly the writer's surfaced notifications, in order.
+    expect(readerConn.notifications.map(updateSig)).toEqual(
+      writerConn.notifications.map(updateSig),
+    );
+    // The mapper drops session.created / turn.started / turn.completed,
+    // so the user-message + model-deltas remain. For the canonical run
+    // this is 1 user_message_chunk + 2 agent_message_chunk = 3 notifications.
+    expect(readerConn.notifications).toHaveLength(3);
+  });
+
+  it("rejects loadSession for a session id that was never persisted", async () => {
+    const store = new InMemoryStore();
+    const reader = new CustomAgent({
+      conn: new NotificationCollector(),
+      eventStore: store,
+    });
+    await expect(
+      reader.loadSession({ cwd: "/tmp", mcpServers: [], sessionId: "sess_does_not_exist" }),
+    ).rejects.toThrow(/no such session/);
+  });
+
+  it("after loadSession, subsequent prompt is rejected (replay-only)", async () => {
+    const store = new InMemoryStore();
+    const { agent: writer } = makeAgent({
+      provider: new FakeStreamingProvider({ chunks: ["x"] }),
+      store,
+    });
+    const { sessionId } = await writer.newSession({ cwd: "/tmp", mcpServers: [] });
+    await writer.prompt({ sessionId, prompt: [text("hi")] });
+
+    const reader = new CustomAgent({ conn: new NotificationCollector(), eventStore: store });
+    await reader.loadSession({ cwd: "/tmp", mcpServers: [], sessionId });
+    await expect(reader.prompt({ sessionId, prompt: [text("more")] })).rejects.toThrow(
+      /replay only/i,
+    );
+  });
+
+  it("rejects loadSession if the process already owns a session", async () => {
+    const store = new InMemoryStore();
+    const { agent } = makeAgent({ store });
+    await agent.newSession({ cwd: "/tmp", mcpServers: [] });
+    await expect(
+      agent.loadSession({ cwd: "/tmp", mcpServers: [], sessionId: "sess_other" }),
+    ).rejects.toThrow(/already owns/);
+  });
+});
+
+/** Stable signature for a SessionNotification's update field (without the sessionId). */
+function updateSig(n: SessionNotification): string {
+  return JSON.stringify(n.update);
+}
 
 describe("CustomAgent + JsonlSessionStore (filesystem integration)", () => {
   it("persists events to JSONL and a fresh JsonlEventLog replays them in order", async () => {

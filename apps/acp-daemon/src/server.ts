@@ -216,6 +216,34 @@ async function handleRpc(
       return;
     }
 
+    if (msg.method === "session/load") {
+      // session/load mirrors session/new: it CREATES the daemon-side
+      // entry; the client supplies the sessionId in params. Header MUST
+      // NOT be present — the body field is the only identity source for
+      // a freshly loaded session. (SPEC.md §5/§6.)
+      if (sessionId) {
+        respondJsonRpc(res, msg.id ?? null, null, {
+          code: -32602,
+          message: "session/load must not carry X-ACP-Session-Id",
+        });
+        return;
+      }
+      const params = (msg.params ?? {}) as { sessionId?: unknown };
+      if (typeof params.sessionId !== "string" || params.sessionId.length === 0) {
+        respondJsonRpc(res, msg.id ?? null, null, {
+          code: -32602,
+          message: "session/load params.sessionId is required and must be a non-empty string",
+        });
+        return;
+      }
+      const result = await manager.loadSession({
+        initializeParams: { protocolVersion: 1 },
+        loadSessionParams: msg.params as { sessionId: string; [key: string]: unknown },
+      });
+      respondJsonRpc(res, msg.id ?? null, result.loadSessionResult);
+      return;
+    }
+
     // All other methods are session-scoped.
     if (!sessionId) {
       respondJson(res, 400, { error: `missing ${SESSION_HEADER} header for ${msg.method}` });

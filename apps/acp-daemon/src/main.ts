@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { SessionManager } from "./session-manager";
 import { startServer } from "./server";
 
@@ -12,6 +15,13 @@ import { startServer } from "./server";
 //   ACP_DAEMON_PORT       — optional, default 0 (ephemeral). The actual
 //                            bound port is logged after listen() resolves.
 //   ACP_DAEMON_HOST       — optional, default 127.0.0.1.
+//   ACP_EVENT_LOG_ROOT    — optional, shared directory for per-session
+//                            JSONL logs. When unset, the daemon mkdtemps
+//                            a per-process dir and propagates it to every
+//                            spawned acp-server child so M1-04 session/load
+//                            can find the writer's log from a replay
+//                            child. When set, the daemon honors the
+//                            operator's path (e.g. ~/.cache/custom-agent).
 
 async function main(): Promise<void> {
   const authToken = process.env.ACP_DAEMON_AUTH_TOKEN;
@@ -27,10 +37,19 @@ async function main(): Promise<void> {
   }
   const host = process.env.ACP_DAEMON_HOST ?? "127.0.0.1";
 
-  const manager = new SessionManager();
+  // Resolve a stable event-log root for all spawned children so the
+  // M1-04 replay path can find the writer's JSONL from a different child.
+  const eventLogRoot = process.env.ACP_EVENT_LOG_ROOT
+    ? ensureDir(process.env.ACP_EVENT_LOG_ROOT)
+    : mkdtempSync(join(tmpdir(), "acp-daemon-"));
+
+  const manager = new SessionManager({
+    childEnv: { ...process.env, ACP_EVENT_LOG_ROOT: eventLogRoot },
+  });
   const server = await startServer({ port, host, authToken, manager });
   process.stdout.write(
-    `acp-daemon listening on http://${server.address.address}:${server.address.port}\n`,
+    `acp-daemon listening on http://${server.address.address}:${server.address.port}\n` +
+      `acp-daemon event log root: ${eventLogRoot}\n`,
   );
 
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
@@ -49,6 +68,11 @@ async function main(): Promise<void> {
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
+}
+
+function ensureDir(path: string): string {
+  mkdirSync(path, { recursive: true });
+  return path;
 }
 
 main().catch((err: unknown) => {

@@ -42,6 +42,23 @@ export type CreateSessionResult = {
   newSessionResult: unknown;
 };
 
+export type LoadSessionInput = {
+  initializeParams: { protocolVersion: number; [key: string]: unknown };
+  /**
+   * session/load params from the client. MUST include `sessionId` — unlike
+   * createSession, the client picks the id (it is the id of a previously
+   * recorded session). The child opens its persisted JSONL by that id.
+   */
+  loadSessionParams: { sessionId: string; [key: string]: unknown };
+};
+
+export type LoadSessionResult = {
+  /** Same id the client passed in. */
+  sessionId: string;
+  /** Original JSON-RPC result for session/load (for proxying back). */
+  loadSessionResult: unknown;
+};
+
 export type SessionManagerOptions = {
   /** Override for tests — produce a ChildHandle without spawning. */
   spawnChild?: (opts: ChildHandleOptions) => ChildHandle;
@@ -136,49 +153,84 @@ export class SessionManager {
       throw new Error("child session/new returned no sessionId");
     }
 
-    const cursor = new SessionCursor(this.ringSize);
-    const state: SessionState = { sessionId, child, cursor, status: "alive" };
-    this.sessions.set(sessionId, state);
-
-    // Wire child notifications → cursor. Only session/update notifications
-    // are persisted to the SSE stream; the daemon does not invent its own
-    // notification methods so any other method passed through is a
-    // forward-compatibility courtesy.
-    child.on("notification", (msg) => {
-      if (state.status !== "alive") return;
-      try {
-        cursor.push(JSON.stringify(msg));
-      } catch {
-        // Cursor closed concurrently with a notification; harmless.
-      }
-    });
-
-    child.on("exit", (info) => {
-      state.status = "terminated";
-      state.terminationReason = `child_exited(code=${info.code}, signal=${info.signal})`;
-      // Push a final synthetic event so any subscribed SSE stream sees
-      // the termination and the response handler in server.ts can emit
-      // `event: terminated`. We tag it with a method the daemon owns to
-      // avoid colliding with ACP-defined methods.
-      try {
-        cursor.push(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            method: "_daemon/terminated",
-            params: { sessionId, reason: state.terminationReason },
-          }),
-        );
-      } catch {
-        // ignore
-      }
-      // Keep the cursor open briefly so a slow SSE consumer can still
-      // drain the final events, then GC the entry. Without this a
-      // long-running daemon would accumulate one stale state per
-      // crashed session indefinitely.
-      this.scheduleGrace(sessionId);
-    });
+    this.registerSession(sessionId, child);
 
     return { sessionId, newSessionResult: newResp.result };
+  }
+
+  /**
+   * Spawn a fresh child, perform `initialize` + `session/load`, register
+   * the session under the client-supplied sessionId, and return the child's
+   * `session/load` response.
+   *
+   * Unlike createSession, the cursor + notification listener are wired BEFORE
+   * the `session/load` request. The acp-server emits `session/update`
+   * notifications synchronously during the loadSession handler (one per
+   * mapped historical event); if we attached the listener after the
+   * response, every replayed update would be silently dropped before the
+   * SSE client could attach.
+   */
+  async loadSession(input: LoadSessionInput): Promise<LoadSessionResult> {
+    const { sessionId } = input.loadSessionParams;
+    if (typeof sessionId !== "string" || sessionId.length === 0) {
+      throw new Error("session/load requires a non-empty params.sessionId");
+    }
+    const existing = this.sessions.get(sessionId);
+    if (existing) {
+      if (existing.status === "alive") {
+        throw new Error(`session/load: ${sessionId} is already alive in this daemon`);
+      }
+      // A terminated entry can still be in the registry during the
+      // grace window. A client asking to load this session is implicitly
+      // done watching the live stream — eagerly GC the stale entry so
+      // the load can proceed instead of returning a confusing
+      // "already loaded" error to a perfectly reasonable request.
+      await this.terminate(sessionId);
+    }
+
+    const child = this.spawnChild({ env: this.childEnv });
+
+    // Wire cursor + listeners FIRST so notifications emitted during the
+    // session/load handler (which is the entire point of replay) are not
+    // dropped between request issue and response receipt.
+    const state = this.registerSession(sessionId, child);
+
+    // Cleanup helper for the early-failure path: tear down the registered
+    // state synchronously so a failed loadSession leaves no residue.
+    const cleanup = async (): Promise<void> => {
+      this.sessions.delete(sessionId);
+      this.graceCancels.get(sessionId)?.();
+      this.graceCancels.delete(sessionId);
+      state.status = "terminated";
+      state.cursor.close();
+      await child.terminate();
+    };
+
+    let initResp: JsonRpcMessage;
+    try {
+      initResp = await child.request("initialize", input.initializeParams);
+    } catch (err) {
+      await cleanup();
+      throw err;
+    }
+    if (initResp.error) {
+      await cleanup();
+      throw new Error(`child initialize failed: ${initResp.error.message}`);
+    }
+
+    let loadResp: JsonRpcMessage;
+    try {
+      loadResp = await child.request("session/load", input.loadSessionParams);
+    } catch (err) {
+      await cleanup();
+      throw err;
+    }
+    if (loadResp.error) {
+      await cleanup();
+      throw new Error(`child session/load failed: ${loadResp.error.message}`);
+    }
+
+    return { sessionId, loadSessionResult: loadResp.result ?? {} };
   }
 
   /** Forward a request frame to the child. Returns the child's response. */
@@ -282,6 +334,49 @@ export class SessionManager {
   async terminateAll(): Promise<void> {
     const ids = Array.from(this.sessions.keys());
     await Promise.all(ids.map((id) => this.terminate(id)));
+  }
+
+  /**
+   * Allocate a SessionCursor, wire the child's notification + exit
+   * listeners to it, and insert the SessionState into the registry.
+   * Used by both createSession (after session/new returns) and
+   * loadSession (BEFORE session/load is issued, since replay
+   * notifications come synchronously during that call).
+   */
+  private registerSession(sessionId: string, child: ChildHandle): SessionState {
+    const cursor = new SessionCursor(this.ringSize);
+    const state: SessionState = { sessionId, child, cursor, status: "alive" };
+    this.sessions.set(sessionId, state);
+
+    child.on("notification", (msg) => {
+      if (state.status !== "alive") return;
+      try {
+        cursor.push(JSON.stringify(msg));
+      } catch {
+        // Cursor closed concurrently with a notification; harmless.
+      }
+    });
+
+    child.on("exit", (info) => {
+      state.status = "terminated";
+      state.terminationReason = `child_exited(code=${info.code}, signal=${info.signal})`;
+      // Push a final synthetic event so any subscribed SSE stream sees
+      // the termination and server.ts can emit `event: terminated`.
+      try {
+        cursor.push(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            method: "_daemon/terminated",
+            params: { sessionId, reason: state.terminationReason },
+          }),
+        );
+      } catch {
+        // ignore
+      }
+      this.scheduleGrace(sessionId);
+    });
+
+    return state;
   }
 
   /**
