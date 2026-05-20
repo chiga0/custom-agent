@@ -173,18 +173,22 @@ export class ToolRouter {
 
     const budget = new BudgetAccumulator(this.outputBudgetBytes);
     let deltaCount = 0;
+    // Sink writes (in M3-02b: EventStore.append) MUST preserve order to
+    // honour the storage layer's sequence invariant. Per-chunk await
+    // serializes delivery — that's the right semantic for the
+    // SessionEngine integration path; profiling-driven concurrency can
+    // come later if a real bottleneck shows up.
+    let deltaChain: Promise<void> = Promise.resolve();
 
     const emit = (chunk: ToolChunk): void => {
       const trimmed = budget.take(chunk.text);
       if (!trimmed) return;
-      // Fire-and-forget: per-chunk emit is awaited in a microtask. The
-      // sink is in-process (engine wires to EventStore); awaiting here
-      // would serialize chunk delivery to the consumer. Net behaviour:
-      // chunks arrive in submission order but we don't wait per-chunk.
-      void this.toolEventSink.emit({
-        type: "tool.delta",
-        payload: { toolCallId, kind: chunk.kind, text: trimmed },
-      });
+      deltaChain = deltaChain.then(() =>
+        this.toolEventSink.emit({
+          type: "tool.delta",
+          payload: { toolCallId, kind: chunk.kind, text: trimmed },
+        }),
+      );
       deltaCount += 1;
     };
 
@@ -202,6 +206,20 @@ export class ToolRouter {
         status: "failed",
         errorCode: classifyThrown(err),
         message,
+      };
+    }
+
+    // Drain every in-flight delta emit BEFORE the terminal event lands.
+    // Without this the audit log could see tool.completed before the
+    // final tool.delta when the sink is async-slow.
+    try {
+      await deltaChain;
+    } catch (err) {
+      // A delta-sink failure is itself a tool failure; surface it.
+      outcome = {
+        status: "failed",
+        errorCode: "io_error",
+        message: `tool.delta sink failed: ${err instanceof Error ? err.message : String(err)}`,
       };
     }
 

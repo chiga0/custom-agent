@@ -229,6 +229,59 @@ describe("ToolRouter — failure paths", () => {
   });
 });
 
+describe("ToolRouter — delta ordering (Round 1 P2 #1)", () => {
+  it("tool.delta events arrive in order and before tool.completed even with async-slow sink", async () => {
+    // Sink that resolves after a microtask gap so the happens-before
+    // relationship between delta and completed is verifiable: a
+    // fire-and-forget router would let completed race past deltas.
+    const order: string[] = [];
+    const captured: ToolEventInput[] = [];
+    const slowSink = {
+      async emit(e: ToolEventInput): Promise<void> {
+        await Promise.resolve();
+        await Promise.resolve();
+        captured.push(e);
+        order.push(e.type);
+      },
+    };
+    const fastTool: Tool<unknown> = {
+      name: "fast",
+      risk: "read",
+      async execute(_args, ctx) {
+        void _args;
+        ctx.emit({ kind: "result", text: "one" });
+        ctx.emit({ kind: "result", text: "two" });
+        ctx.emit({ kind: "result", text: "three" });
+        return { status: "ok" };
+      },
+    };
+    const engine = new PermissionEngine({
+      policy: { byRisk: { read: "allow" } },
+      approvalSource: async () => ({ outcome: "allowed" }),
+      eventSink: new CapturingPermissionSink(),
+    });
+    const router = new ToolRouter({
+      permissionEngine: engine,
+      toolEventSink: slowSink,
+      cwd: "/tmp",
+      tools: [fastTool],
+    });
+    await router.dispatch({ toolName: "fast", args: {}, reason: "x" });
+    expect(order).toEqual([
+      "tool.started",
+      "tool.delta",
+      "tool.delta",
+      "tool.delta",
+      "tool.completed",
+    ]);
+    expect(
+      captured
+        .filter((e) => e.type === "tool.delta")
+        .map((e) => (e.payload as { text: string }).text),
+    ).toEqual(["one", "two", "three"]);
+  });
+});
+
 describe("ToolRouter — output budget", () => {
   it("excess emit() output is truncated and tool.completed.truncated=true", async () => {
     const flooderTool: Tool<unknown> = {
