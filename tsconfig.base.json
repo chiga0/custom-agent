@@ -23,7 +23,11 @@
       "@custom-agent/core": ["packages/core/src/index.ts"],
       "@custom-agent/storage": ["packages/storage/src/index.ts"],
       "@custom-agent/permissions": ["packages/permissions/src/index.ts"],
-      "@custom-agent/qa-fixtures": ["packages/qa-fixtures/src/index.ts"]
+      "@custom-agent/qa-fixtures": ["packages/qa-fixtures/src/index.ts"],
+      "@custom-agent/model-gateway": ["packages/model-gateway/src/index.ts"],
+      "@custom-agent/model-gateway/providers/recorded": [
+        "packages/model-gateway/src/providers/recorded.ts"
+      ]
     }
   }
 }

@@ -1,6 +1,7 @@
 import type { AgentEvent, TurnErrorCode } from "@custom-agent/schema";
 import type { EventStore } from "./ports/event-store";
 import type { ModelProvider } from "./ports/model-provider";
+import { ProviderError, toTurnErrorCode } from "./ports/provider-error";
 
 // SessionEngine drives the turn state machine described in
 // custom-agent-docs/docs/zh/handbook/layers/agent-core.md.
@@ -258,7 +259,11 @@ export class SessionEngine {
           stopReason = "cancelled";
         } else {
           stopReason = "error";
-          errorCode = "unknown";
+          // M2-02a wiring: typed ProviderError instances map to specific
+          // TurnErrorCode values via the central mapper; bare Errors
+          // (provider bug, network exception not wrapped, etc.) land as
+          // "unknown" so we never silently mask a runtime fault.
+          errorCode = error instanceof ProviderError ? toTurnErrorCode(error) : "unknown";
         }
       }
 

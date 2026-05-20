@@ -6,6 +6,7 @@
     { "path": "packages/storage" },
     { "path": "packages/permissions" },
     { "path": "packages/qa-fixtures" },
+    { "path": "packages/model-gateway" },
     { "path": "apps/web-client" },
     { "path": "apps/cli" },
     { "path": "apps/acp-server" },
