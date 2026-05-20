@@ -2,8 +2,23 @@ import type {
   PermissionDecision,
   PermissionOutcome,
   PermissionOutcomeSource,
+  ToolPermissionRequestedEvent,
+  ToolPermissionResolvedEvent,
   ToolRisk,
 } from "@custom-agent/schema";
+
+// Hard cap on the audit log line for an args preview. Defense in depth
+// at the engine boundary so a misbehaving tool router cannot blow up
+// the JSONL event log with a multi-megabyte arg dump. The ToolRouter
+// (M3-02) is expected to render its own redacted preview; this cap is
+// a safety net, not the primary policy.
+const ARGS_PREVIEW_MAX_CHARS = 512;
+
+function truncatePreview(preview: string | undefined): string | undefined {
+  if (preview === undefined) return undefined;
+  if (preview.length <= ARGS_PREVIEW_MAX_CHARS) return preview;
+  return `${preview.slice(0, ARGS_PREVIEW_MAX_CHARS)}…[truncated]`;
+}
 
 // PermissionEngine (M3-01)
 //
@@ -110,34 +125,19 @@ export type PermissionEventSink = {
 };
 
 /**
- * Engine-emitted event shape BEFORE the EventStore stamps id / sequence /
- * timestamp. Kept narrow so tests / SessionEngine integration can wire it
- * to AgentEvent commit logic without depending on the storage layer.
+ * Engine-emitted event shape BEFORE the EventStore stamps id /
+ * sequence / timestamp / sessionId / turnId / schemaVersion. The
+ * SessionEngine adapter (M3-02 wiring) fills the envelope fields when
+ * commiting to the AgentEvent log.
+ *
+ * Derived directly from the schema's
+ * `ToolPermissionRequestedEvent` / `ToolPermissionResolvedEvent` so
+ * the two source files cannot drift. Adding a field to the schema
+ * payload automatically widens this type.
  */
 export type PermissionEventInput =
-  | {
-      readonly type: "tool.permission_requested";
-      readonly payload: {
-        requestId: string;
-        toolCallId?: string;
-        toolName: string;
-        risk: ToolRisk;
-        decision: PermissionDecision;
-        reason: string;
-        argsPreview?: string;
-      };
-    }
-  | {
-      readonly type: "tool.permission_resolved";
-      readonly payload: {
-        requestId: string;
-        toolCallId?: string;
-        toolName: string;
-        outcome: PermissionOutcome;
-        source: PermissionOutcomeSource;
-        reason?: string;
-      };
-    };
+  | Pick<ToolPermissionRequestedEvent, "type" | "payload">
+  | Pick<ToolPermissionResolvedEvent, "type" | "payload">;
 
 export type PermissionEngineOptions = {
   readonly policy?: PermissionPolicy;
@@ -201,7 +201,7 @@ export class PermissionEngine {
         risk: request.risk,
         decision,
         reason: request.reason,
-        argsPreview: request.argsPreview,
+        argsPreview: truncatePreview(request.argsPreview),
       },
     });
 

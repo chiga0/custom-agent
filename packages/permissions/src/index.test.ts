@@ -175,6 +175,24 @@ describe("PermissionEngine — requestPermission lifecycle + event emission", ()
     expect(res.reason).toBe("cancelled");
   });
 
+  it("truncates oversized argsPreview at the engine boundary (audit log safety net)", async () => {
+    const sink = new CapturingSink();
+    const engine = new PermissionEngine({
+      approvalSource: alwaysApproveSource(),
+      eventSink: sink,
+    });
+    const big = "x".repeat(2_000);
+    await engine.requestPermission({
+      toolName: "read_file",
+      risk: "read",
+      reason: "scan",
+      argsPreview: big,
+    });
+    const preview = (sink.events[0].payload as { argsPreview?: string }).argsPreview ?? "";
+    expect(preview.length).toBeLessThan(big.length);
+    expect(preview.endsWith("[truncated]")).toBe(true);
+  });
+
   it("threads toolCallId + argsPreview through both events", async () => {
     const sink = new CapturingSink();
     const engine = new PermissionEngine({
