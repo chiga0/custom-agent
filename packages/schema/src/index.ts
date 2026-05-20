@@ -117,6 +117,70 @@ export type ToolPermissionResolvedEvent = EventEnvelope<
   }
 >;
 
+/**
+ * Emitted when ToolRouter has confirmed permission and is about to
+ * invoke the executor (M3-02). Provides correlation across the
+ * lifecycle and a pre-execution snapshot of the args (already
+ * truncated by the router).
+ */
+export type ToolStartedEvent = EventEnvelope<
+  "tool.started",
+  {
+    /** Stable per-invocation id; same value appears on delta / completed / failed. */
+    toolCallId: string;
+    /** Optional id linking back to the matching tool.permission_resolved. */
+    permissionRequestId?: string;
+    toolName: string;
+    argsPreview?: string;
+  }
+>;
+
+/** Stream chunk from a tool execution (e.g. a shell line, a search hit). */
+export type ToolDeltaEvent = EventEnvelope<
+  "tool.delta",
+  {
+    toolCallId: string;
+    /** Discriminator for the chunk content variant. */
+    kind: "stdout" | "stderr" | "result";
+    text: string;
+  }
+>;
+
+export type ToolCompletedEvent = EventEnvelope<
+  "tool.completed",
+  {
+    toolCallId: string;
+    toolName: string;
+    /** Number of `tool.delta` events emitted in this invocation (for audit). */
+    deltaCount: number;
+    /** Was the output truncated by the budget? */
+    truncated: boolean;
+  }
+>;
+
+/**
+ * Open string union for structured tool failure reasons. M3-02 lays
+ * down the initial vocabulary; M3-03+ will extend.
+ */
+export type ToolErrorCode =
+  | "permission_denied"
+  | "path_unsafe"
+  | "not_found"
+  | "io_error"
+  | "budget_exceeded"
+  | "cancelled"
+  | "unknown";
+
+export type ToolFailedEvent = EventEnvelope<
+  "tool.failed",
+  {
+    toolCallId: string;
+    toolName: string;
+    errorCode: ToolErrorCode;
+    message: string;
+  }
+>;
+
 export type AgentEvent =
   | SessionCreatedEvent
   | TurnStartedEvent
@@ -124,7 +188,11 @@ export type AgentEvent =
   | ModelDeltaEvent
   | TurnCompletedEvent
   | ToolPermissionRequestedEvent
-  | ToolPermissionResolvedEvent;
+  | ToolPermissionResolvedEvent
+  | ToolStartedEvent
+  | ToolDeltaEvent
+  | ToolCompletedEvent
+  | ToolFailedEvent;
 
 export const eventTypes = [
   "session.created",
@@ -134,6 +202,10 @@ export const eventTypes = [
   "turn.completed",
   "tool.permission_requested",
   "tool.permission_resolved",
+  "tool.started",
+  "tool.delta",
+  "tool.completed",
+  "tool.failed",
 ] as const satisfies readonly AgentEvent["type"][];
 
 // ACP (Agent Client Protocol) wire-contract types live in a separate

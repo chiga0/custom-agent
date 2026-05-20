@@ -19,7 +19,7 @@ describe("agent event schema", () => {
     expect(isAgentEvent(event)).toBe(true);
   });
 
-  it("keeps the M1/M2/M3-01 public event list", () => {
+  it("keeps the M1/M2/M3 public event list", () => {
     expect(eventTypes).toEqual([
       "session.created",
       "turn.started",
@@ -28,7 +28,66 @@ describe("agent event schema", () => {
       "turn.completed",
       "tool.permission_requested",
       "tool.permission_resolved",
+      "tool.started",
+      "tool.delta",
+      "tool.completed",
+      "tool.failed",
     ]);
+  });
+
+  it("accepts a tool.started event (M3-02 additive)", () => {
+    const event = {
+      id: "evt_1",
+      schemaVersion: 1,
+      sessionId: "sess_1",
+      turnId: "turn_1",
+      sequence: 1,
+      timestamp: "2026-05-20T00:00:00.000Z",
+      type: "tool.started",
+      payload: {
+        toolCallId: "tc_1",
+        toolName: "read_file",
+      },
+    } as AgentEvent;
+    expect(isAgentEvent(event)).toBe(true);
+  });
+
+  it("accepts a tool.completed event (M3-02 additive)", () => {
+    const event = {
+      id: "evt_2",
+      schemaVersion: 1,
+      sessionId: "sess_1",
+      turnId: "turn_1",
+      sequence: 2,
+      timestamp: "2026-05-20T00:00:00.000Z",
+      type: "tool.completed",
+      payload: {
+        toolCallId: "tc_1",
+        toolName: "read_file",
+        deltaCount: 1,
+        truncated: false,
+      },
+    } as AgentEvent;
+    expect(isAgentEvent(event)).toBe(true);
+  });
+
+  it("accepts a tool.failed event (M3-02 additive)", () => {
+    const event = {
+      id: "evt_3",
+      schemaVersion: 1,
+      sessionId: "sess_1",
+      turnId: "turn_1",
+      sequence: 3,
+      timestamp: "2026-05-20T00:00:00.000Z",
+      type: "tool.failed",
+      payload: {
+        toolCallId: "tc_1",
+        toolName: "read_file",
+        errorCode: "path_unsafe",
+        message: "blocked",
+      },
+    } as AgentEvent;
+    expect(isAgentEvent(event)).toBe(true);
   });
 
   it("accepts a tool.permission_requested event (M3-01 additive)", () => {

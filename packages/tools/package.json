@@ -1,0 +1,13 @@
+{
+  "name": "@custom-agent/tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@custom-agent/schema": "0.1.0",
+    "@custom-agent/permissions": "0.1.0"
+  }
+}
