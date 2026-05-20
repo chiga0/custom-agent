@@ -36,6 +36,15 @@ export function mapEventToUpdate(event: AgentEvent): SessionUpdate | null {
     case "turn.completed":
     case "tool.permission_requested":
     case "tool.permission_resolved":
+    case "tool.started":
+    case "tool.delta":
+    case "tool.completed":
+    case "tool.failed":
+      // Tool events are audit-only in M3-02; the ACP wire surface for
+      // tool calls (session/update tool_call / tool_call_update) is
+      // M3-02b's responsibility when the SessionEngine actually drives
+      // tool calls from the model loop. Today's transcript only shows
+      // user / agent text chunks.
       return null;
     case "user.message":
       return {

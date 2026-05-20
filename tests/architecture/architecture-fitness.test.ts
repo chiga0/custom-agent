@@ -17,6 +17,7 @@ const aliasToPath: Record<string, string> = {
   "@custom-agent/core": "packages/core",
   "@custom-agent/model-gateway": "packages/model-gateway",
   "@custom-agent/permissions": "packages/permissions",
+  "@custom-agent/tools": "packages/tools",
   "@custom-agent/qa-fixtures": "packages/qa-fixtures",
   "@custom-agent/schema": "packages/schema",
   "@custom-agent/storage": "packages/storage",
@@ -99,6 +100,32 @@ const forbiddenEdges = [
     from: "packages/permissions",
     to: "packages/model-gateway",
     reason: "permission engine must not couple to provider adapters",
+  },
+  {
+    from: "packages/core",
+    to: "packages/tools",
+    reason: "core defines no tool concept; concrete tools depend on schema + permissions, not core",
+  },
+  {
+    from: "packages/schema",
+    to: "packages/tools",
+    reason: "schema is leaf; tool implementations depend on schema, not the reverse",
+  },
+  {
+    from: "packages/storage",
+    to: "packages/tools",
+    reason: "storage must not couple to tool implementations",
+  },
+  {
+    from: "packages/permissions",
+    to: "packages/tools",
+    reason:
+      "permission engine must not couple to tool implementations (engine is policy + lifecycle; tools call into engine, not the reverse)",
+  },
+  {
+    from: "packages/model-gateway",
+    to: "packages/tools",
+    reason: "model gateway is provider-only; tool execution lives in @custom-agent/tools",
   },
 ];
 
