@@ -123,33 +123,21 @@ export class SessionManager {
    */
   async createSession(input: CreateSessionInput): Promise<CreateSessionResult> {
     const child = this.spawnChild({ env: this.childEnv });
-    let initResp: JsonRpcMessage;
-    try {
-      initResp = await child.request("initialize", input.initializeParams);
-    } catch (err) {
+    const onFailure = async (): Promise<void> => {
       await child.terminate();
-      throw err;
-    }
-    if (initResp.error) {
-      await child.terminate();
-      throw new Error(`child initialize failed: ${initResp.error.message}`);
-    }
+    };
 
-    let newResp: JsonRpcMessage;
-    try {
-      newResp = await child.request("session/new", input.newSessionParams);
-    } catch (err) {
-      await child.terminate();
-      throw err;
-    }
-    if (newResp.error) {
-      await child.terminate();
-      throw new Error(`child session/new failed: ${newResp.error.message}`);
-    }
+    await this.requestChildOrCleanup(child, "initialize", input.initializeParams, onFailure);
+    const newResp = await this.requestChildOrCleanup(
+      child,
+      "session/new",
+      input.newSessionParams,
+      onFailure,
+    );
 
     const sessionId = extractSessionId(newResp.result);
     if (!sessionId) {
-      await child.terminate();
+      await onFailure();
       throw new Error("child session/new returned no sessionId");
     }
 
@@ -206,31 +194,43 @@ export class SessionManager {
       await child.terminate();
     };
 
-    let initResp: JsonRpcMessage;
-    try {
-      initResp = await child.request("initialize", input.initializeParams);
-    } catch (err) {
-      await cleanup();
-      throw err;
-    }
-    if (initResp.error) {
-      await cleanup();
-      throw new Error(`child initialize failed: ${initResp.error.message}`);
-    }
-
-    let loadResp: JsonRpcMessage;
-    try {
-      loadResp = await child.request("session/load", input.loadSessionParams);
-    } catch (err) {
-      await cleanup();
-      throw err;
-    }
-    if (loadResp.error) {
-      await cleanup();
-      throw new Error(`child session/load failed: ${loadResp.error.message}`);
-    }
+    await this.requestChildOrCleanup(child, "initialize", input.initializeParams, cleanup);
+    const loadResp = await this.requestChildOrCleanup(
+      child,
+      "session/load",
+      input.loadSessionParams,
+      cleanup,
+    );
 
     return { sessionId, loadSessionResult: loadResp.result ?? {} };
+  }
+
+  /**
+   * Send a JSON-RPC request to the child and unwrap the response.
+   * Runs `onFailure()` (and propagates the error) if either the
+   * request throws or the child returns a JSON-RPC `error` field.
+   * This is the shared error-handling shape behind both createSession
+   * and loadSession; without it, each method would carry its own
+   * 4-line try/catch + error-unwrap block for every request stage.
+   */
+  private async requestChildOrCleanup(
+    child: ChildHandle,
+    method: string,
+    params: unknown,
+    onFailure: () => Promise<void>,
+  ): Promise<JsonRpcMessage> {
+    let resp: JsonRpcMessage;
+    try {
+      resp = await child.request(method, params);
+    } catch (err) {
+      await onFailure();
+      throw err;
+    }
+    if (resp.error) {
+      await onFailure();
+      throw new Error(`child ${method} failed: ${resp.error.message}`);
+    }
+    return resp;
   }
 
   /** Forward a request frame to the child. Returns the child's response. */

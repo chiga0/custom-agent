@@ -127,6 +127,18 @@ subsequent `/rpc` and `/events` request:
 X-ACP-Session-Id: <sessionId>
 ```
 
+The daemon constrains session ids to the regex
+`[A-Za-z0-9][A-Za-z0-9_-]{0,127}` (max 128 characters, starts with an
+alphanumeric, only alphanumerics + `_` + `-` thereafter). Ids are used
+as filesystem path components, HTTP header values, and log tokens; the
+constraint blocks path traversal, header continuation, and noisy log
+lines from a hostile or buggy client. The daemon REJECTS:
+
+- A `session/load` whose `params.sessionId` violates the pattern
+  (`-32602` "invalid params").
+- Any session-scoped request whose `X-ACP-Session-Id` violates the
+  pattern (HTTP `400 Bad Request`).
+
 Daemon behavior when the header is missing on a session-scoped method
 or `/events`:
 
@@ -213,6 +225,12 @@ mkdtemps a per-process directory and propagates it to every spawned
 child; that mode supports cross-process load WITHIN one daemon lifetime
 but not across daemon restarts.
 
+The ACP `LoadSessionRequest.additionalDirectories` field is **ignored
+in M1** — the writer-side cwd is already pinned in the `session.created`
+event payload and reproducing the writer's directory roots is a M3+
+MCP concern. Future revisions may activate additional roots before the
+replay; clients SHOULD NOT depend on the field having any effect today.
+
 ## 7. SSE Stream
 
 `GET /events` upgrades to an SSE stream. The response sets:
@@ -245,6 +263,21 @@ The SSE stream stays open until any of:
 - Child process exits (daemon writes one final event with
   `event: terminated` and closes the stream).
 - Daemon shutdown.
+
+When the child exits the daemon writes the final frame as:
+
+```
+id: <next-cursor-id>
+event: terminated
+data: {"jsonrpc":"2.0","method":"_daemon/terminated","params":{"sessionId":"<id>","reason":"child_exited(code=<code>, signal=<signal>)"}}
+```
+
+The `data:` field carries a JSON-RPC-shaped notification with a
+daemon-reserved method name (`_daemon/terminated`, underscore prefix to
+avoid collision with ACP-defined methods). Clients SHOULD parse the
+`reason` field for diagnostics but MUST NOT route the frame as a real
+JSON-RPC notification. The daemon never delivers `_daemon/terminated`
+on the JSON-RPC channel — only as the SSE wrapper above.
 
 The daemon SHOULD send a comment-only keep-alive frame (`: ping\n\n`)
 every 15 seconds to detect dead intermediate proxies.

@@ -20,6 +20,16 @@ const SESSION_HEADER = "x-acp-session-id";
 const LAST_EVENT_HEADER = "last-event-id";
 const SSE_KEEPALIVE_MS = 15_000;
 
+// Session ids are used as filesystem path components (the writer's
+// JSONL is at `${ACP_EVENT_LOG_ROOT}/${sessionId}.jsonl`) AND as HTTP
+// header values AND as log line tokens. Pin a conservative shape so a
+// hostile / buggy client cannot inject path traversal, header
+// continuation, or noisy log lines. SPEC.md §5 documents this rule.
+const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+function isValidSessionId(value: unknown): value is string {
+  return typeof value === "string" && SESSION_ID_PATTERN.test(value);
+}
+
 export type ServerOptions = {
   /** Listening port. 0 = ephemeral, useful for tests. */
   port?: number;
@@ -177,12 +187,18 @@ async function handleRpc(
       // mirrors what the child later advertises, but the child itself is
       // always spawned with protocolVersion: 1 in M1. Real per-session
       // version threading is an M2 concern.
+      //
+      // The advertised agentCapabilities MUST match what `apps/acp-server`
+      // returns from its own initialize (see apps/acp-server/src/agent.ts
+      // initialize()), otherwise clients that trust the daemon's response
+      // will skip methods the child actually supports — notably session/load
+      // (M1-04).
       respondJsonRpc(res, msg.id ?? null, {
         protocolVersion:
           (msg.params as { protocolVersion?: number } | undefined)?.protocolVersion ?? 1,
         agentInfo: { name: "Custom Agent (daemon)", version: "0.1.0" },
         agentCapabilities: {
-          loadSession: false,
+          loadSession: true,
           promptCapabilities: { image: false, audio: false, embeddedContext: false },
           mcpCapabilities: { http: false, sse: false },
         },
@@ -229,10 +245,11 @@ async function handleRpc(
         return;
       }
       const params = (msg.params ?? {}) as { sessionId?: unknown };
-      if (typeof params.sessionId !== "string" || params.sessionId.length === 0) {
+      if (!isValidSessionId(params.sessionId)) {
         respondJsonRpc(res, msg.id ?? null, null, {
           code: -32602,
-          message: "session/load params.sessionId is required and must be a non-empty string",
+          message:
+            "session/load params.sessionId is required and must match [A-Za-z0-9][A-Za-z0-9_-]{0,127}",
         });
         return;
       }
@@ -247,6 +264,16 @@ async function handleRpc(
     // All other methods are session-scoped.
     if (!sessionId) {
       respondJson(res, 400, { error: `missing ${SESSION_HEADER} header for ${msg.method}` });
+      return;
+    }
+    if (!isValidSessionId(sessionId)) {
+      // Reject malformed header values BEFORE they reach the registry
+      // lookup or any log line — defense-in-depth against header
+      // injection / path traversal even though the value normally
+      // round-trips from a daemon-issued response.
+      respondJson(res, 400, {
+        error: `${SESSION_HEADER} must match [A-Za-z0-9][A-Za-z0-9_-]{0,127}`,
+      });
       return;
     }
 
@@ -324,6 +351,12 @@ async function handleEvents(
   const sessionId = Array.isArray(sessionHeader) ? sessionHeader[0] : sessionHeader;
   if (!sessionId) {
     respondJson(res, 400, { error: `missing ${SESSION_HEADER}` });
+    return;
+  }
+  if (!isValidSessionId(sessionId)) {
+    respondJson(res, 400, {
+      error: `${SESSION_HEADER} must match [A-Za-z0-9][A-Za-z0-9_-]{0,127}`,
+    });
     return;
   }
   const lastEventHeader = req.headers[LAST_EVENT_HEADER];

@@ -186,8 +186,42 @@ describe("daemon HTTP server", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as JsonRpcMessage;
     expect(body.id).toBe(1);
-    expect((body.result as { protocolVersion: number }).protocolVersion).toBe(1);
+    const result = body.result as {
+      protocolVersion: number;
+      agentCapabilities: { loadSession: boolean };
+    };
+    expect(result.protocolVersion).toBe(1);
+    // The daemon must advertise the same loadSession capability the child
+    // does (apps/acp-server CustomAgent.initialize returns loadSession=true),
+    // otherwise a client that trusts the daemon's response will skip
+    // session/load even though the child supports it (M1-04).
+    expect(result.agentCapabilities.loadSession).toBe(true);
     expect(h.pendingChildren).toHaveLength(0);
+  });
+
+  it("session/new spawn failure surfaces as JSON-RPC error with source=daemon", async () => {
+    // Drive a real spawn failure path: the FakeChild's initialize handler
+    // rejects synchronously, mirroring what would happen if the acp-server
+    // binary refused to start. The daemon must convert that into a
+    // JSON-RPC error response (200 OK at the HTTP layer) with the
+    // `data.source = "daemon"` annotation per SPEC.md §11.
+    const child = new FakeChild({
+      sessionId: "_",
+      responses: {
+        initialize: () => Promise.reject(new Error("spawn failed: ENOENT")),
+      },
+    });
+    h = await startHarness({ childFactory: () => child });
+    const res = await fetch(`${h.baseUrl}/rpc`, {
+      method: "POST",
+      headers: authHeaders(h.token),
+      body: JSON.stringify({ jsonrpc: "2.0", id: 7, method: "session/new", params: {} }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as JsonRpcMessage;
+    expect(body.id).toBe(7);
+    expect(body.error?.message).toMatch(/spawn failed/);
+    expect((body.error?.data as { source?: string } | undefined)?.source).toBe("daemon");
   });
 
   it("session/new spawns a child and returns sessionId", async () => {
@@ -544,6 +578,46 @@ describe("daemon HTTP server", () => {
     expect(events.map((e) => e.id)).toEqual([1, 2]);
     expect(events[0].data).toContain('"L1"');
     expect(events[1].data).toContain('"L2"');
+  });
+
+  it("session/load rejects a malformed params.sessionId (400 -32602)", async () => {
+    h = await startHarness({ childFactory: () => new FakeChild({ sessionId: "_" }) });
+    const res = await fetch(`${h.baseUrl}/rpc`, {
+      method: "POST",
+      headers: authHeaders(h.token),
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "session/load",
+        params: { sessionId: "../etc/passwd", cwd: "/tmp", mcpServers: [] },
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as JsonRpcMessage;
+    expect(body.error?.code).toBe(-32602);
+    expect(body.error?.message).toMatch(/A-Za-z0-9/);
+  });
+
+  it("session-scoped methods reject a malformed X-ACP-Session-Id header (400)", async () => {
+    h = await startHarness({ childFactory: () => new FakeChild({ sessionId: "_" }) });
+    const res = await fetch(`${h.baseUrl}/rpc`, {
+      method: "POST",
+      headers: authHeaders(h.token, { "X-ACP-Session-Id": "../escape" }),
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "session/prompt", params: {} }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/A-Za-z0-9/);
+  });
+
+  it("GET /events rejects a malformed X-ACP-Session-Id header (400)", async () => {
+    h = await startHarness({ childFactory: () => new FakeChild({ sessionId: "_" }) });
+    const res = await fetch(`${h.baseUrl}/events`, {
+      headers: { Authorization: `Bearer ${h.token}`, "X-ACP-Session-Id": "bad/id" },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/A-Za-z0-9/);
   });
 
   it("session/load rejects body without params.sessionId (400 -32602)", async () => {
