@@ -1,4 +1,4 @@
-import type { AgentEvent } from "@custom-agent/schema";
+import type { AgentEvent, TurnErrorCode } from "@custom-agent/schema";
 import type { EventStore } from "./ports/event-store";
 import type { ModelProvider } from "./ports/model-provider";
 
@@ -181,6 +181,7 @@ export class SessionEngine {
     state.currentTurn = { turnId, controller, fsm };
 
     let stopReason: StopReason = "final";
+    let errorCode: TurnErrorCode | undefined;
 
     try {
       // idle -> running, persisted via turn.started.
@@ -188,13 +189,32 @@ export class SessionEngine {
       yield await this.emitTurnStarted(state, turnId, input.userMessage);
       yield await this.emitUserMessage(state, turnId, input.userMessage);
 
+      const request = {
+        modelId: this.provider.id,
+        messages: [{ role: "user" as const, content: input.userMessage }],
+      };
+
+      // M2-01 / [[adr-0003]] §2: preflight the request against the
+      // provider's hard context window BEFORE opening a stream.
+      // Failure must NOT throw out of runTurn — clients rely on
+      // turn.completed being the single terminal event. Map to
+      // stopReason=error + errorCode=context_overflow and short-circuit
+      // past the stream loop.
+      const preflight = this.provider.preflightCheck(request);
+      if (!preflight.ok) {
+        stopReason = "error";
+        errorCode = preflight.reason;
+        fsm.transition(
+          "failed",
+          `turn.completed (stopReason=error, errorCode=${preflight.reason}, est=${preflight.estimatedTokens}, max=${preflight.maxContextTokens})`,
+        );
+        yield await this.emitTurnCompleted(state, turnId, stopReason, errorCode);
+        return;
+      }
+
       // Stream model deltas inline so consumers can call cancelTurn between
       // any two yields. Accumulating into an array first would defeat that.
       try {
-        const request = {
-          modelId: this.provider.id,
-          messages: [{ role: "user" as const, content: input.userMessage }],
-        };
         for await (const chunk of this.provider.stream(request, signal)) {
           // Guard BEFORE persist+yield: prevents a post-abort delta yielded
           // by the provider (e.g. between abort and its own check) from
@@ -206,7 +226,12 @@ export class SessionEngine {
           if (chunk.type === "text_delta") {
             yield await this.emitModelDelta(state, turnId, chunk.delta);
           } else if (chunk.type === "failed") {
-            stopReason = signal.aborted ? "cancelled" : "error";
+            if (signal.aborted) {
+              stopReason = "cancelled";
+            } else {
+              stopReason = "error";
+              errorCode = "provider_failure";
+            }
             break;
           }
           // "completed" just terminates the loop naturally.
@@ -229,12 +254,17 @@ export class SessionEngine {
           }
           throw error;
         }
-        stopReason = signal.aborted ? "cancelled" : "error";
+        if (signal.aborted) {
+          stopReason = "cancelled";
+        } else {
+          stopReason = "error";
+          errorCode = "unknown";
+        }
       }
 
       // Normal exit: bind FSM exit state to stopReason and emit completion.
       fsm.transition(stopReasonToState(stopReason), `turn.completed (stopReason=${stopReason})`);
-      yield await this.emitTurnCompleted(state, turnId, stopReason);
+      yield await this.emitTurnCompleted(state, turnId, stopReason, errorCode);
     } finally {
       state.currentTurn = undefined;
     }
@@ -306,11 +336,17 @@ export class SessionEngine {
     state: SessionState,
     turnId: string,
     stopReason: StopReason,
+    errorCode?: TurnErrorCode,
   ): Promise<AgentEvent> {
+    // Only attach errorCode when stopReason is "error"; payload stays
+    // backward-compatible for the M1 fixtures (final / cancelled paths
+    // never had this field).
+    const payload =
+      stopReason === "error" && errorCode ? { stopReason, errorCode } : { stopReason };
     return this.commitEvent(state, {
       turnId,
       type: "turn.completed",
-      payload: { stopReason },
+      payload,
     });
   }
 

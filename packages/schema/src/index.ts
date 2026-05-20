@@ -38,10 +38,22 @@ export type ModelDeltaEvent = EventEnvelope<
   }
 >;
 
+/**
+ * Structured diagnostic code attached to `turn.completed` when
+ * `stopReason === "error"`. Open string union: M2-01 introduces
+ * `context_overflow` (ADR-0003 §2); future provider / tool failures
+ * may add more variants (e.g. `provider_unavailable`, `tool_denied`).
+ *
+ * Omitted on successful turns (`stopReason === "final"`) and on
+ * user-cancelled turns (`stopReason === "cancelled"`).
+ */
+export type TurnErrorCode = "context_overflow" | "provider_failure" | "unknown";
+
 export type TurnCompletedEvent = EventEnvelope<
   "turn.completed",
   {
     stopReason: "final" | "cancelled" | "error";
+    errorCode?: TurnErrorCode;
   }
 >;
 

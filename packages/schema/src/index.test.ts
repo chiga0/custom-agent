@@ -28,4 +28,32 @@ describe("agent event schema", () => {
       "turn.completed",
     ]);
   });
+
+  it("accepts a turn.completed with optional errorCode (M2-01 additive)", () => {
+    const event = {
+      id: "evt_2",
+      schemaVersion: 1,
+      sessionId: "sess_1",
+      turnId: "turn_1",
+      sequence: 5,
+      timestamp: "2026-05-20T00:00:00.000Z",
+      type: "turn.completed",
+      payload: { stopReason: "error", errorCode: "context_overflow" },
+    } as AgentEvent;
+    expect(isAgentEvent(event)).toBe(true);
+  });
+
+  it("accepts a turn.completed WITHOUT errorCode (back-compat for M1 happy path)", () => {
+    const event = {
+      id: "evt_3",
+      schemaVersion: 1,
+      sessionId: "sess_1",
+      turnId: "turn_1",
+      sequence: 5,
+      timestamp: "2026-05-20T00:00:00.000Z",
+      type: "turn.completed",
+      payload: { stopReason: "final" },
+    } as AgentEvent;
+    expect(isAgentEvent(event)).toBe(true);
+  });
 });
