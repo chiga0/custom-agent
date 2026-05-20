@@ -198,6 +198,9 @@ describe("CustomAgent (ACP Agent interface)", () => {
         reasoning: false,
         maxContextTokens: 1000,
       };
+      preflightCheck(): { ok: true; estimatedTokens: number } {
+        return { ok: true, estimatedTokens: 0 };
+      }
       async *stream(_req: ModelRequest, signal: AbortSignal): AsyncIterable<ModelStreamEvent> {
         void _req;
         const chunks = ["a", "b", "c", "d", "e", "f"];

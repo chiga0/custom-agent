@@ -180,7 +180,64 @@ describe("SessionEngine", () => {
     );
 
     expect(events.at(-1)?.type).toBe("turn.completed");
-    expect((events.at(-1)?.payload as { stopReason: string }).stopReason).toBe("error");
+    const payload = events.at(-1)?.payload as { stopReason: string; errorCode?: string };
+    expect(payload.stopReason).toBe("error");
+    // M2-01: provider failures carry an errorCode for downstream
+    // diagnostics. throwAfterFirstChunk exits the stream by throwing, so
+    // it reaches the catch path with errorCode=unknown (not the
+    // {type:"failed"} path which would be provider_failure).
+    expect(payload.errorCode).toBe("unknown");
+  });
+
+  it("preflight failure short-circuits the turn before opening a stream (M2-01)", async () => {
+    // 10-token budget, 200-char message → ~50 tokens → preflight fails.
+    const { engine, store } = makeEngine({
+      provider: { chunks: ["x"], maxContextTokens: 10 },
+    });
+    const session = await engine.createSession({ cwd: "/tmp", client: "test" });
+
+    const events = await collect(
+      engine.runTurn({ sessionId: session.sessionId, userMessage: "x".repeat(200) }),
+    );
+
+    // No model.delta emitted because the stream never opened.
+    expect(events.map((e) => e.type)).toEqual(["turn.started", "user.message", "turn.completed"]);
+    const tail = events.at(-1)?.payload as { stopReason: string; errorCode?: string };
+    expect(tail.stopReason).toBe("error");
+    expect(tail.errorCode).toBe("context_overflow");
+
+    // Both the in-memory store and the engine yield must agree on the
+    // terminal event (durable-then-visible invariant).
+    const inMemoryStore = store as InMemoryEventStore;
+    expect(inMemoryStore.events.map((e) => e.type)).toEqual([
+      "session.created",
+      "turn.started",
+      "user.message",
+      "turn.completed",
+    ]);
+  });
+
+  it("preflight failure clears currentTurn so a follow-up turn can run", async () => {
+    const { engine } = makeEngine({
+      provider: { chunks: ["x"], maxContextTokens: 10 },
+    });
+    const session = await engine.createSession({ cwd: "/tmp", client: "test" });
+
+    // First turn fails preflight.
+    await collect(engine.runTurn({ sessionId: session.sessionId, userMessage: "x".repeat(200) }));
+
+    // Second turn (small enough to fit) must succeed; if currentTurn
+    // wasn't cleared we'd get "session already has an active turn".
+    const second = await collect(
+      engine.runTurn({ sessionId: session.sessionId, userMessage: "hi" }),
+    );
+    expect(second.map((e) => e.type)).toEqual([
+      "turn.started",
+      "user.message",
+      "model.delta",
+      "turn.completed",
+    ]);
+    expect((second.at(-1)?.payload as { stopReason: string }).stopReason).toBe("final");
   });
 
   it("can run a second turn after the first completes", async () => {
@@ -225,6 +282,9 @@ describe("SessionEngine", () => {
         reasoning: false,
         maxContextTokens: 1000,
       };
+      preflightCheck(): { ok: true; estimatedTokens: number } {
+        return { ok: true, estimatedTokens: 0 };
+      }
       async *stream(_req: ModelRequest, _signal: AbortSignal): AsyncIterable<ModelStreamEvent> {
         void _req;
         void _signal;

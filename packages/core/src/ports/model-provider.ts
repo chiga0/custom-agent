@@ -31,8 +31,39 @@ export type ModelStreamEvent =
   | { readonly type: "completed"; readonly usage?: ModelUsage }
   | { readonly type: "failed"; readonly reason: string };
 
+/**
+ * Result of a synchronous, network-free check that a ModelRequest fits
+ * within the provider's hard constraints (currently context window).
+ *
+ * Per [[adr-0003]] §2, real providers MUST run this BEFORE opening a
+ * stream so the daemon never relies on the upstream API rejecting an
+ * over-budget request asynchronously (which can hang or 5xx without a
+ * clean error frame). Core consumes the result and surfaces failures
+ * as `turn.completed { stopReason: "error", errorCode: "context_overflow" }`
+ * — see `SessionEngine.runTurn`.
+ */
+export type PreflightResult =
+  | { readonly ok: true; readonly estimatedTokens: number }
+  | {
+      readonly ok: false;
+      readonly reason: "context_overflow";
+      readonly estimatedTokens: number;
+      readonly maxContextTokens: number;
+    };
+
 export type ModelProvider = {
   readonly id: string;
   readonly capabilities: ModelCapabilities;
+  /**
+   * Estimate token usage for the request and report whether it fits
+   * within the provider's hard limits. MUST be synchronous (or close
+   * to it) and MUST NOT hit the network — this runs on every turn
+   * before the stream and must stay cheap.
+   *
+   * Implementations are expected to use the provider's own tokenizer
+   * (or a conservative approximation) over `request.messages`. Fake
+   * providers in tests may use a character-count heuristic.
+   */
+  preflightCheck(request: ModelRequest): PreflightResult;
   stream(request: ModelRequest, signal: AbortSignal): AsyncIterable<ModelStreamEvent>;
 };
