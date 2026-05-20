@@ -49,6 +49,22 @@ export type ModelDeltaEvent = EventEnvelope<
  */
 export type TurnErrorCode = "context_overflow" | "provider_failure" | "unknown";
 
+/** Coarse risk tier on a tool invocation (M3-01). Drives default policy. */
+export type ToolRisk = "read" | "write" | "execute" | "network";
+
+/** Synchronous policy decision returned by PermissionEngine.evaluate (M3-01). */
+export type PermissionDecision = "allow" | "ask" | "deny";
+
+/** Resolved outcome after the (possibly async) ask flow finishes. */
+export type PermissionOutcome = "allowed" | "denied";
+
+/**
+ * Source of the resolved outcome — was it a static policy match
+ * (no human-in-the-loop), or did a human / client explicitly approve?
+ * Recorded on `tool.permission_resolved` for audit.
+ */
+export type PermissionOutcomeSource = "policy" | "user";
+
 export type TurnCompletedEvent = EventEnvelope<
   "turn.completed",
   {
@@ -57,12 +73,58 @@ export type TurnCompletedEvent = EventEnvelope<
   }
 >;
 
+/**
+ * Emitted by PermissionEngine when a tool invocation needs evaluation
+ * (M3-01). Always emitted — even for `allow`-by-policy decisions — so
+ * the audit log captures every tool intent BEFORE execution.
+ */
+export type ToolPermissionRequestedEvent = EventEnvelope<
+  "tool.permission_requested",
+  {
+    /** Stable id correlating request <-> resolved events for the same call. */
+    requestId: string;
+    /** ACP-style tool call id, when available (M3 wires this from tool router). */
+    toolCallId?: string;
+    toolName: string;
+    risk: ToolRisk;
+    /** Synchronous policy decision: allow / ask / deny. */
+    decision: PermissionDecision;
+    /** Free-form reason from the agent (helps the user judge ask-flow prompts). */
+    reason: string;
+    /** Tool arguments preview (truncated; M3-02 will pin the budget). */
+    argsPreview?: string;
+  }
+>;
+
+/**
+ * Emitted by PermissionEngine when a `requestId` reaches its terminal
+ * `allowed` / `denied` outcome. For `decision: "allow" | "deny"` policy
+ * matches the resolved event fires synchronously after the requested
+ * event; for `decision: "ask"` the resolved event fires when the
+ * injected approval source returns.
+ */
+export type ToolPermissionResolvedEvent = EventEnvelope<
+  "tool.permission_resolved",
+  {
+    requestId: string;
+    toolCallId?: string;
+    toolName: string;
+    outcome: PermissionOutcome;
+    /** Where the outcome came from (`policy` for auto-decided, `user` for ask). */
+    source: PermissionOutcomeSource;
+    /** Optional free-form reason supplied by the deciding party. */
+    reason?: string;
+  }
+>;
+
 export type AgentEvent =
   | SessionCreatedEvent
   | TurnStartedEvent
   | UserMessageEvent
   | ModelDeltaEvent
-  | TurnCompletedEvent;
+  | TurnCompletedEvent
+  | ToolPermissionRequestedEvent
+  | ToolPermissionResolvedEvent;
 
 export const eventTypes = [
   "session.created",
@@ -70,6 +132,8 @@ export const eventTypes = [
   "user.message",
   "model.delta",
   "turn.completed",
+  "tool.permission_requested",
+  "tool.permission_resolved",
 ] as const satisfies readonly AgentEvent["type"][];
 
 // ACP (Agent Client Protocol) wire-contract types live in a separate

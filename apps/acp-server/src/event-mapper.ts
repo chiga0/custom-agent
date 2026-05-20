@@ -22,12 +22,20 @@ import type { SessionUpdate } from "@custom-agent/schema/acp";
 //
 // M3+ will add tool_call / tool_call_update / plan when ToolRouter and the
 // PermissionEngine emit the corresponding internal events.
+//
+// M3-01 lands `tool.permission_requested` and `tool.permission_resolved`
+// in the schema but does NOT surface them on the ACP wire yet. The audit
+// trail lives in the event log; the wire-surface (e.g. ACP `request_permission`
+// / `request_permission_response`) is M3-02's responsibility when actual
+// tool calls start arriving over `session/prompt`.
 
 export function mapEventToUpdate(event: AgentEvent): SessionUpdate | null {
   switch (event.type) {
     case "session.created":
     case "turn.started":
     case "turn.completed":
+    case "tool.permission_requested":
+    case "tool.permission_resolved":
       return null;
     case "user.message":
       return {

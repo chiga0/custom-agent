@@ -19,14 +19,56 @@ describe("agent event schema", () => {
     expect(isAgentEvent(event)).toBe(true);
   });
 
-  it("keeps the initial public event list intentionally small", () => {
+  it("keeps the M1/M2/M3-01 public event list", () => {
     expect(eventTypes).toEqual([
       "session.created",
       "turn.started",
       "user.message",
       "model.delta",
       "turn.completed",
+      "tool.permission_requested",
+      "tool.permission_resolved",
     ]);
+  });
+
+  it("accepts a tool.permission_requested event (M3-01 additive)", () => {
+    const event = {
+      id: "evt_perm_1",
+      schemaVersion: 1,
+      sessionId: "sess_1",
+      turnId: "turn_1",
+      sequence: 7,
+      timestamp: "2026-05-20T00:00:00.000Z",
+      type: "tool.permission_requested",
+      payload: {
+        requestId: "perm_1",
+        toolName: "shell",
+        risk: "execute",
+        decision: "ask",
+        reason: "agent wants to run npm test",
+      },
+    } as AgentEvent;
+    expect(isAgentEvent(event)).toBe(true);
+  });
+
+  it("accepts a tool.permission_resolved event (M3-01 additive)", () => {
+    const event = {
+      id: "evt_perm_2",
+      schemaVersion: 1,
+      sessionId: "sess_1",
+      turnId: "turn_1",
+      sequence: 8,
+      timestamp: "2026-05-20T00:00:00.000Z",
+      type: "tool.permission_resolved",
+      payload: {
+        requestId: "perm_1",
+        toolName: "shell",
+        outcome: "allowed",
+        source: "user",
+        reason: "looks safe",
+      },
+    } as AgentEvent;
+    expect(isAgentEvent(event)).toBe(true);
   });
 
   it("accepts a turn.completed with optional errorCode (M2-01 additive)", () => {
