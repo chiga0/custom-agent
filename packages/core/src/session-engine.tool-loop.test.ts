@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { SessionEngine } from "./session-engine";
 import { FakeToolCallProvider } from "./providers/fake-tool-provider";
 import type { ToolCallHandlerFactory } from "./ports/tool-call-handler";
-import type { AgentEvent } from "@custom-agent/schema";
+import type { AgentEvent, TurnCompletedEvent, ModelDeltaEvent } from "@custom-agent/schema";
 
 // Simple in-memory event store
 class MemoryEventStore {
@@ -67,13 +67,13 @@ describe("SessionEngine tool call loop", () => {
     }
 
     // Should have turn.started, user.message, model.delta x N, turn.completed
-    const turnCompleted = events.find((e) => e.type === "turn.completed");
+    const turnCompleted = events.find((e) => e.type === "turn.completed") as TurnCompletedEvent | undefined;
     expect(turnCompleted).toBeDefined();
-    expect((turnCompleted as any).payload.stopReason).toBe("final");
+    expect(turnCompleted?.payload.stopReason).toBe("final");
 
-    const modelDeltas = events.filter((e) => e.type === "model.delta");
+    const modelDeltas = events.filter((e) => e.type === "model.delta") as ModelDeltaEvent[];
     expect(modelDeltas.length).toBeGreaterThan(0);
-    const text = modelDeltas.map((e) => (e as any).payload.text).join("");
+    const text = modelDeltas.map((e) => e.payload.text).join("");
     expect(text.trim()).toContain("Got result");
   });
 
@@ -102,7 +102,7 @@ describe("SessionEngine tool call loop", () => {
       events.push(event);
     }
 
-    const completed = events.find((e) => e.type === "turn.completed");
-    expect((completed as any).payload.stopReason).toBe("final");
+    const completed = events.find((e) => e.type === "turn.completed") as TurnCompletedEvent | undefined;
+    expect(completed?.payload.stopReason).toBe("final");
   });
 });

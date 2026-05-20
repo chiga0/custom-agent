@@ -1,17 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { shellTool } from "./shell";
 import type { ToolContext } from "../tool";
+import { BudgetAccumulator } from "../budget";
 
 function makeCtx(cwd = process.cwd()): ToolContext {
   return {
     cwd,
     signal: new AbortController().signal,
     emit: () => {},
-    budget: {
-      take: (text: string) => text,
-      truncated: false,
-      bytesUsed: 0,
-    } as any,
+    budget: new BudgetAccumulator(),
   };
 }
 
@@ -30,7 +27,7 @@ describe("shellTool", () => {
   it("denies dangerous commands from denylist", async () => {
     const result = await shellTool.execute({ command: "rm -rf /" }, makeCtx());
     expect(result.status).toBe("failed");
-    expect((result as any).errorCode).toBe("permission_denied");
+    if (result.status === "failed") expect(result.errorCode).toBe("permission_denied");
   });
 
   it("returns failure when command exits non-zero", async () => {

@@ -1,6 +1,6 @@
 import type { AgentEvent, TurnErrorCode } from "@custom-agent/schema";
 import type { EventStore } from "./ports/event-store";
-import type { ModelProvider } from "./ports/model-provider";
+import type { ModelMessage, ModelToolDefinition, ModelProvider } from "./ports/model-provider";
 import type { ToolCallHandlerFactory } from "./ports/tool-call-handler";
 import { ProviderError, toTurnErrorCode } from "./ports/provider-error";
 
@@ -223,7 +223,7 @@ export class SessionEngine {
 
       const availableTools = toolHandler?.listTools() ?? [];
 
-      let messages: import("./ports/model-provider").ModelMessage[] = [
+      let messages: ModelMessage[] = [
         { role: "user" as const, content: input.userMessage },
       ];
 
@@ -231,7 +231,7 @@ export class SessionEngine {
         const request = {
           modelId: this.provider.id,
           messages,
-          ...(availableTools.length > 0 && { tools: availableTools as import("./ports/model-provider").ModelToolDefinition[] }),
+          ...(availableTools.length > 0 && { tools: availableTools as ModelToolDefinition[] }),
         };
 
         const pendingToolCalls: Array<{ toolCallId: string; toolName: string; toolArgs: unknown }> = [];

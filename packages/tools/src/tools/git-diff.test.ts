@@ -3,13 +3,14 @@ import { execSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { gitDiffTool } from "./git-diff";
 import type { ToolContext } from "../tool";
+import { BudgetAccumulator } from "../budget";
 
 function makeCtx(cwd: string): ToolContext {
   return {
     cwd,
     signal: new AbortController().signal,
     emit: () => {},
-    budget: { take: (text: string) => text, truncated: false, bytesUsed: 0 } as any,
+    budget: new BudgetAccumulator(),
   };
 }
 
