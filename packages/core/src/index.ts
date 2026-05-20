@@ -35,3 +35,13 @@ export type {
 } from "./ports/model-provider";
 
 export type { EventStore } from "./ports/event-store";
+
+export {
+  ProviderError,
+  ProviderRateLimit,
+  ProviderUnauthorized,
+  ProviderContextOverflow,
+  ProviderServerError,
+  ProviderUnknownError,
+  toTurnErrorCode,
+} from "./ports/provider-error";

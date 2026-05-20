@@ -83,11 +83,7 @@ describe("SessionEngine + RecordedProvider (integration)", () => {
     expect(payload.errorCode).toBe("context_overflow");
   });
 
-  it("recorded mid-stream rate-limit surfaces as turn.completed stopReason=error", async () => {
-    // SessionEngine catches the thrown ProviderError and lands on
-    // errorCode=unknown in its current code path (M2-01 minimal
-    // mapping); a future ProviderRateLimit-aware path would refine the
-    // code. Documenting the current behaviour as a regression-pin.
+  it("recorded mid-stream rate-limit maps to errorCode=provider_failure via toTurnErrorCode", async () => {
     const { engine } = makeEngine({
       tokenEstimate: 5,
       maxContextTokens: 1000,
@@ -107,9 +103,23 @@ describe("SessionEngine + RecordedProvider (integration)", () => {
     ]);
     const payload = events.at(-1)?.payload as { stopReason: string; errorCode?: string };
     expect(payload.stopReason).toBe("error");
-    // M2-02a docs the M2-01 minimum: thrown ProviderError lands as
-    // errorCode="unknown". M2-02b (or a follow-up to SessionEngine)
-    // can refine the mapping using toTurnErrorCode().
-    expect(payload.errorCode).toBe("unknown");
+    expect(payload.errorCode).toBe("provider_failure");
+  });
+
+  it("recorded mid-stream context_overflow throw maps to errorCode=context_overflow", async () => {
+    const { engine } = makeEngine({
+      tokenEstimate: 5,
+      maxContextTokens: 1000,
+      events: [{ kind: "text_delta", delta: "partial" }],
+      failBefore: 1,
+      failWith: { kind: "context_overflow", message: "exceeded mid-stream" },
+    });
+    const session = await engine.createSession({ cwd: "/tmp", client: "test" });
+    const events = await collect(
+      engine.runTurn({ sessionId: session.sessionId, userMessage: "hi" }),
+    );
+    const payload = events.at(-1)?.payload as { stopReason: string; errorCode?: string };
+    expect(payload.stopReason).toBe("error");
+    expect(payload.errorCode).toBe("context_overflow");
   });
 });

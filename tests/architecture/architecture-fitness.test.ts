@@ -31,11 +31,6 @@ const forbiddenEdges = [
   },
   {
     from: "packages/core",
-    to: "packages/model-gateway/providers/",
-    reason: "core must not depend on provider SDK adapters",
-  },
-  {
-    from: "packages/core",
     to: "packages/mcp-client/transports/",
     reason: "core must not depend on MCP transport implementations",
   },

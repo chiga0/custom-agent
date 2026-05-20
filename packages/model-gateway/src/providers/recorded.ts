@@ -164,5 +164,11 @@ function fromRecordedError(err: RecordedProviderError): Error {
       return new ProviderServerError(err.message);
     case "unknown":
       return new ProviderUnknownError(err.message);
+    default: {
+      // Exhaustiveness guard: adding a new RecordedProviderError variant
+      // without extending this switch is a compile error here.
+      const _exhaustive: never = err;
+      throw new Error(`Unhandled RecordedProviderError variant: ${JSON.stringify(_exhaustive)}`);
+    }
   }
 }
