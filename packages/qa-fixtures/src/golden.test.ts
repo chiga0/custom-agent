@@ -45,6 +45,17 @@ describe("golden: canonical fake-provider turn", () => {
     expect(actual).toBe(expected);
   });
 
+  it("happy-path fixture does NOT contain the M2-01 errorCode field (additive evolution guard)", async () => {
+    // M2-01 added an optional `errorCode` field to TurnCompletedEvent
+    // payload. The canonical happy-path turn ends with
+    // stopReason="final", so errorCode MUST be absent from the fixture.
+    // This guard pins the contract that future additive schema
+    // evolution never silently changes the M1 byte-stable fixture.
+    const fixture = await readFile(fixturePath, "utf8");
+    expect(fixture).not.toContain("errorCode");
+    expect(fixture).toContain('"stopReason": "final"');
+  });
+
   it("live turn events plus the session.created prefix equal the committed fixture", async () => {
     // This is the strongest drift detector: if the engine reorders events,
     // changes the prompt-preview slicing, renames a payload field, or stops
