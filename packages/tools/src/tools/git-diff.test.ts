@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { gitDiffTool } from "./git-diff";
@@ -26,7 +26,7 @@ describe("gitDiffTool", () => {
       const result = await gitDiffTool.execute({}, ctx);
       expect(result.status).toBe("ok");
     } finally {
-      execSync(`rm -rf ${repoDir}`);
+      rmSync(repoDir, { recursive: true, force: true });
     }
   });
 
