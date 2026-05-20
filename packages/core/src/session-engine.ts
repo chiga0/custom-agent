@@ -1,6 +1,7 @@
 import type { AgentEvent, TurnErrorCode } from "@custom-agent/schema";
 import type { EventStore } from "./ports/event-store";
 import type { ModelProvider } from "./ports/model-provider";
+import type { ToolCallHandlerFactory } from "./ports/tool-call-handler";
 import { ProviderError, toTurnErrorCode } from "./ports/provider-error";
 
 // SessionEngine drives the turn state machine described in
@@ -64,6 +65,7 @@ export type SessionEngineDeps = {
   readonly provider: ModelProvider;
   readonly now?: () => Date;
   readonly createId?: (prefix: string) => string;
+  readonly makeToolHandler?: ToolCallHandlerFactory;
 };
 
 type SessionState = {
@@ -125,6 +127,7 @@ export class SessionEngine {
   private readonly provider: ModelProvider;
   private readonly now: () => Date;
   private readonly createId: (prefix: string) => string;
+  private readonly makeToolHandler: ToolCallHandlerFactory | undefined;
   private readonly sessions = new Map<string, SessionState>();
 
   constructor(deps: SessionEngineDeps) {
@@ -132,6 +135,7 @@ export class SessionEngine {
     this.provider = deps.provider;
     this.now = deps.now ?? (() => new Date());
     this.createId = deps.createId ?? ((prefix) => `${prefix}_${crypto.randomUUID()}`);
+    this.makeToolHandler = deps.makeToolHandler;
   }
 
   async createSession(input: CreateSessionInput): Promise<Session> {
@@ -185,23 +189,16 @@ export class SessionEngine {
     let errorCode: TurnErrorCode | undefined;
 
     try {
-      // idle -> running, persisted via turn.started.
       fsm.transition("running", "turn.started");
       yield await this.emitTurnStarted(state, turnId, input.userMessage);
       yield await this.emitUserMessage(state, turnId, input.userMessage);
 
-      const request = {
+      const initialRequest = {
         modelId: this.provider.id,
         messages: [{ role: "user" as const, content: input.userMessage }],
       };
 
-      // M2-01 / [[adr-0003]] §2: preflight the request against the
-      // provider's hard context window BEFORE opening a stream.
-      // Failure must NOT throw out of runTurn — clients rely on
-      // turn.completed being the single terminal event. Map to
-      // stopReason=error + errorCode=context_overflow and short-circuit
-      // past the stream loop.
-      const preflight = this.provider.preflightCheck(request);
+      const preflight = this.provider.preflightCheck(initialRequest);
       if (!preflight.ok) {
         stopReason = "error";
         errorCode = preflight.reason;
@@ -213,61 +210,85 @@ export class SessionEngine {
         return;
       }
 
-      // Stream model deltas inline so consumers can call cancelTurn between
-      // any two yields. Accumulating into an array first would defeat that.
-      try {
-        for await (const chunk of this.provider.stream(request, signal)) {
-          // Guard BEFORE persist+yield: prevents a post-abort delta yielded
-          // by the provider (e.g. between abort and its own check) from
-          // leaking into the event log.
-          if (signal.aborted) {
-            stopReason = "cancelled";
-            break;
-          }
-          if (chunk.type === "text_delta") {
-            yield await this.emitModelDelta(state, turnId, chunk.delta);
-          } else if (chunk.type === "failed") {
-            if (signal.aborted) {
-              stopReason = "cancelled";
-            } else {
-              stopReason = "error";
-              errorCode = "provider_failure";
+      // Build tool handler for this turn (if tools are wired)
+      const toolHandler = this.makeToolHandler
+        ? this.makeToolHandler(
+            async (partial: Pick<AgentEvent, "type" | "payload">): Promise<void> => {
+              await this.commitEvent(state, { turnId, type: partial.type, payload: partial.payload } as Pick<AgentEvent, "turnId" | "type" | "payload">);
+            },
+            state.cwd,
+            signal,
+          )
+        : undefined;
+
+      const availableTools = toolHandler?.listTools() ?? [];
+
+      let messages: import("./ports/model-provider").ModelMessage[] = [
+        { role: "user" as const, content: input.userMessage },
+      ];
+
+      toolLoop: while (true) {
+        const request = {
+          modelId: this.provider.id,
+          messages,
+          ...(availableTools.length > 0 && { tools: availableTools as import("./ports/model-provider").ModelToolDefinition[] }),
+        };
+
+        const pendingToolCalls: Array<{ toolCallId: string; toolName: string; toolArgs: unknown }> = [];
+        let assistantText = "";
+
+        try {
+          for await (const chunk of this.provider.stream(request, signal)) {
+            if (signal.aborted) { stopReason = "cancelled"; break toolLoop; }
+            if (chunk.type === "text_delta") {
+              assistantText += chunk.delta;
+              yield await this.emitModelDelta(state, turnId, chunk.delta);
+            } else if (chunk.type === "tool_call_request") {
+              pendingToolCalls.push({
+                toolCallId: chunk.toolCallId,
+                toolName: chunk.toolName,
+                toolArgs: chunk.toolArgs,
+              });
+            } else if (chunk.type === "failed") {
+              if (signal.aborted) { stopReason = "cancelled"; }
+              else { stopReason = "error"; errorCode = "provider_failure"; }
+              break toolLoop;
             }
-            break;
+            // "completed" just ends the inner for-await
           }
-          // "completed" just terminates the loop naturally.
-        }
-        if (signal.aborted && stopReason === "final") {
-          stopReason = "cancelled";
-        }
-      } catch (error) {
-        // EventStore failures are infrastructure failures, not provider
-        // failures. Mark the turn as failed but rethrow AFTER turn.completed
-        // is appended so the event log stays consistent.
-        if (error instanceof EventStoreFailure) {
-          stopReason = "error";
-          fsm.transition("failed", `turn.completed (stopReason=error, cause=EventStoreFailure)`);
-          // Try once to emit turn.completed; if THAT also fails, propagate.
-          try {
-            yield await this.emitTurnCompleted(state, turnId, stopReason);
-          } catch {
-            // swallow: original failure is more informative
+        } catch (error) {
+          if (error instanceof EventStoreFailure) {
+            stopReason = "error";
+            fsm.transition("failed", `turn.completed (stopReason=error, cause=EventStoreFailure)`);
+            try { yield await this.emitTurnCompleted(state, turnId, stopReason); } catch { /* swallow */ }
+            throw error;
           }
-          throw error;
+          if (signal.aborted) { stopReason = "cancelled"; }
+          else {
+            stopReason = "error";
+            errorCode = error instanceof ProviderError ? toTurnErrorCode(error) : "unknown";
+          }
+          break toolLoop;
         }
-        if (signal.aborted) {
-          stopReason = "cancelled";
-        } else {
-          stopReason = "error";
-          // M2-02a wiring: typed ProviderError instances map to specific
-          // TurnErrorCode values via the central mapper; bare Errors
-          // (provider bug, network exception not wrapped, etc.) land as
-          // "unknown" so we never silently mask a runtime fault.
-          errorCode = error instanceof ProviderError ? toTurnErrorCode(error) : "unknown";
+
+        if (signal.aborted && stopReason === "final") { stopReason = "cancelled"; break; }
+        if (stopReason !== "final") break;
+        if (pendingToolCalls.length === 0) break; // No tool calls → final text response
+
+        if (!toolHandler) break; // No handler wired
+
+        messages = [...messages, { role: "assistant" as const, content: assistantText }];
+
+        for (const tc of pendingToolCalls) {
+          if (signal.aborted) { stopReason = "cancelled"; break toolLoop; }
+          const resultText = await toolHandler.handle(tc.toolCallId, tc.toolName, tc.toolArgs);
+          messages = [
+            ...messages,
+            { role: "tool" as const, content: resultText, toolCallId: tc.toolCallId, toolName: tc.toolName },
+          ];
         }
       }
 
-      // Normal exit: bind FSM exit state to stopReason and emit completion.
       fsm.transition(stopReasonToState(stopReason), `turn.completed (stopReason=${stopReason})`);
       yield await this.emitTurnCompleted(state, turnId, stopReason, errorCode);
     } finally {
