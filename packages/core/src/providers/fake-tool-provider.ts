@@ -37,7 +37,12 @@ export class FakeToolCallProvider implements ModelProvider {
     const totalChars = request.messages.reduce((acc, m) => acc + m.content.length, 0);
     const estimatedTokens = Math.ceil(totalChars / 4);
     if (estimatedTokens > this.capabilities.maxContextTokens) {
-      return { ok: false, reason: "context_overflow", estimatedTokens, maxContextTokens: this.capabilities.maxContextTokens };
+      return {
+        ok: false,
+        reason: "context_overflow",
+        estimatedTokens,
+        maxContextTokens: this.capabilities.maxContextTokens,
+      };
     }
     return { ok: true, estimatedTokens };
   }

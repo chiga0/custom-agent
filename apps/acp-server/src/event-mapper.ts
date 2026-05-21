@@ -53,7 +53,10 @@ export function mapEventToUpdate(event: AgentEvent): SessionUpdate | null {
     case "tool.failed":
       return {
         sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text: `\n[tool failed: ${event.payload.toolName}: ${event.payload.message}]\n` },
+        content: {
+          type: "text",
+          text: `\n[tool failed: ${event.payload.toolName}: ${event.payload.message}]\n`,
+        },
       };
     case "tool.permission_requested":
     case "tool.permission_resolved":

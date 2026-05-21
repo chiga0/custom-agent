@@ -30,7 +30,11 @@ export const shellTool: Tool<ShellArgs> = {
 
       const timer = setTimeout(() => {
         child.kill("SIGTERM");
-        resolve({ status: "failed", errorCode: "cancelled", message: `command timed out after ${timeout}ms` });
+        resolve({
+          status: "failed",
+          errorCode: "cancelled",
+          message: `command timed out after ${timeout}ms`,
+        });
       }, timeout);
 
       const onAbort = () => {

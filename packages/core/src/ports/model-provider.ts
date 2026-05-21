@@ -39,7 +39,12 @@ export type ModelUsage = {
 
 export type ModelStreamEvent =
   | { readonly type: "text_delta"; readonly delta: string }
-  | { readonly type: "tool_call_request"; readonly toolCallId: string; readonly toolName: string; readonly toolArgs: unknown }
+  | {
+      readonly type: "tool_call_request";
+      readonly toolCallId: string;
+      readonly toolName: string;
+      readonly toolArgs: unknown;
+    }
   | { readonly type: "completed"; readonly usage?: ModelUsage }
   | { readonly type: "failed"; readonly reason: string };
 

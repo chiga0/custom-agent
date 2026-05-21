@@ -41,7 +41,11 @@ export const applyPatchTool: Tool<ApplyPatchArgs> = {
         if (code === 0) {
           resolve({ status: "ok" });
         } else {
-          resolve({ status: "failed", errorCode: "unknown", message: `git apply exited with code ${code}` });
+          resolve({
+            status: "failed",
+            errorCode: "unknown",
+            message: `git apply exited with code ${code}`,
+          });
         }
       });
 

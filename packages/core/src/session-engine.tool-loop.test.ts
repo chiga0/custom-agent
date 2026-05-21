@@ -67,7 +67,9 @@ describe("SessionEngine tool call loop", () => {
     }
 
     // Should have turn.started, user.message, model.delta x N, turn.completed
-    const turnCompleted = events.find((e) => e.type === "turn.completed") as TurnCompletedEvent | undefined;
+    const turnCompleted = events.find((e) => e.type === "turn.completed") as
+      | TurnCompletedEvent
+      | undefined;
     expect(turnCompleted).toBeDefined();
     expect(turnCompleted?.payload.stopReason).toBe("final");
 
@@ -102,7 +104,9 @@ describe("SessionEngine tool call loop", () => {
       events.push(event);
     }
 
-    const completed = events.find((e) => e.type === "turn.completed") as TurnCompletedEvent | undefined;
+    const completed = events.find((e) => e.type === "turn.completed") as
+      | TurnCompletedEvent
+      | undefined;
     expect(completed?.payload.stopReason).toBe("final");
   });
 });

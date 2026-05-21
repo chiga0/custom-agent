@@ -59,4 +59,3 @@ export const ALL_TOOLS: readonly ToolPort<unknown>[] = [
   gitDiffTool as ToolPort<unknown>,
   applyPatchTool as ToolPort<unknown>,
 ];
-

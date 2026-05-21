@@ -214,7 +214,11 @@ export class SessionEngine {
       const toolHandler = this.makeToolHandler
         ? this.makeToolHandler(
             async (partial: Pick<AgentEvent, "type" | "payload">): Promise<void> => {
-              await this.commitEvent(state, { turnId, type: partial.type, payload: partial.payload } as Pick<AgentEvent, "turnId" | "type" | "payload">);
+              await this.commitEvent(state, {
+                turnId,
+                type: partial.type,
+                payload: partial.payload,
+              } as Pick<AgentEvent, "turnId" | "type" | "payload">);
             },
             state.cwd,
             signal,
@@ -223,9 +227,7 @@ export class SessionEngine {
 
       const availableTools = toolHandler?.listTools() ?? [];
 
-      let messages: ModelMessage[] = [
-        { role: "user" as const, content: input.userMessage },
-      ];
+      let messages: ModelMessage[] = [{ role: "user" as const, content: input.userMessage }];
 
       toolLoop: while (true) {
         const request = {
@@ -234,12 +236,16 @@ export class SessionEngine {
           ...(availableTools.length > 0 && { tools: availableTools as ModelToolDefinition[] }),
         };
 
-        const pendingToolCalls: Array<{ toolCallId: string; toolName: string; toolArgs: unknown }> = [];
+        const pendingToolCalls: Array<{ toolCallId: string; toolName: string; toolArgs: unknown }> =
+          [];
         let assistantText = "";
 
         try {
           for await (const chunk of this.provider.stream(request, signal)) {
-            if (signal.aborted) { stopReason = "cancelled"; break toolLoop; }
+            if (signal.aborted) {
+              stopReason = "cancelled";
+              break toolLoop;
+            }
             if (chunk.type === "text_delta") {
               assistantText += chunk.delta;
               yield await this.emitModelDelta(state, turnId, chunk.delta);
@@ -250,8 +256,12 @@ export class SessionEngine {
                 toolArgs: chunk.toolArgs,
               });
             } else if (chunk.type === "failed") {
-              if (signal.aborted) { stopReason = "cancelled"; }
-              else { stopReason = "error"; errorCode = "provider_failure"; }
+              if (signal.aborted) {
+                stopReason = "cancelled";
+              } else {
+                stopReason = "error";
+                errorCode = "provider_failure";
+              }
               break toolLoop;
             }
             // "completed" just ends the inner for-await
@@ -260,18 +270,26 @@ export class SessionEngine {
           if (error instanceof EventStoreFailure) {
             stopReason = "error";
             fsm.transition("failed", `turn.completed (stopReason=error, cause=EventStoreFailure)`);
-            try { yield await this.emitTurnCompleted(state, turnId, stopReason); } catch { /* swallow */ }
+            try {
+              yield await this.emitTurnCompleted(state, turnId, stopReason);
+            } catch {
+              /* swallow */
+            }
             throw error;
           }
-          if (signal.aborted) { stopReason = "cancelled"; }
-          else {
+          if (signal.aborted) {
+            stopReason = "cancelled";
+          } else {
             stopReason = "error";
             errorCode = error instanceof ProviderError ? toTurnErrorCode(error) : "unknown";
           }
           break toolLoop;
         }
 
-        if (signal.aborted && stopReason === "final") { stopReason = "cancelled"; break; }
+        if (signal.aborted && stopReason === "final") {
+          stopReason = "cancelled";
+          break;
+        }
         if (stopReason !== "final") break;
         if (pendingToolCalls.length === 0) break; // No tool calls → final text response
 
@@ -280,11 +298,19 @@ export class SessionEngine {
         messages = [...messages, { role: "assistant" as const, content: assistantText }];
 
         for (const tc of pendingToolCalls) {
-          if (signal.aborted) { stopReason = "cancelled"; break toolLoop; }
+          if (signal.aborted) {
+            stopReason = "cancelled";
+            break toolLoop;
+          }
           const resultText = await toolHandler.handle(tc.toolCallId, tc.toolName, tc.toolArgs);
           messages = [
             ...messages,
-            { role: "tool" as const, content: resultText, toolCallId: tc.toolCallId, toolName: tc.toolName },
+            {
+              role: "tool" as const,
+              content: resultText,
+              toolCallId: tc.toolCallId,
+              toolName: tc.toolName,
+            },
           ];
         }
       }

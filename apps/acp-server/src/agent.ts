@@ -27,7 +27,12 @@ import {
   type ToolCallHandlerFactory,
 } from "@custom-agent/core";
 import { PermissionEngine, DEFAULT_POLICY, type ApprovalSource } from "@custom-agent/permissions";
-import { ToolRouter, ALL_TOOLS, type ToolEventInput, type ToolEventSink } from "@custom-agent/tools";
+import {
+  ToolRouter,
+  ALL_TOOLS,
+  type ToolEventInput,
+  type ToolEventSink,
+} from "@custom-agent/tools";
 import { mapEventToUpdate } from "./event-mapper";
 import { JsonlSessionStore } from "./jsonl-store";
 

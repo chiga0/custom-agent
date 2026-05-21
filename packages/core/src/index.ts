@@ -23,7 +23,11 @@ export {
   type FakeToolCallSequence,
 } from "./providers/fake-tool-provider";
 
-export type { ToolCallHandler, ToolCallHandlerFactory, ToolEventCommit } from "./ports/tool-call-handler";
+export type {
+  ToolCallHandler,
+  ToolCallHandlerFactory,
+  ToolEventCommit,
+} from "./ports/tool-call-handler";
 
 // NOTE: JsonlFileEventStore intentionally NOT re-exported from this barrel.
 // It is a storage-coupled adapter; importing it eagerly through the core

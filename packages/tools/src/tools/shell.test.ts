@@ -17,7 +17,9 @@ describe("shellTool", () => {
     const chunks: string[] = [];
     const ctx: ToolContext = {
       ...makeCtx(),
-      emit: (chunk) => { chunks.push(chunk.text); },
+      emit: (chunk) => {
+        chunks.push(chunk.text);
+      },
     };
     const result = await shellTool.execute({ command: "echo hello" }, ctx);
     expect(result.status).toBe("ok");

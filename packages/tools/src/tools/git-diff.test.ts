@@ -19,7 +19,9 @@ describe("gitDiffTool", () => {
     const repoDir = `${process.cwd()}/git-diff-test-${Date.now()}`;
     try {
       mkdirSync(repoDir, { recursive: true });
-      execSync("git init && git config user.email test@test.com && git config user.name Test", { cwd: repoDir });
+      execSync("git init && git config user.email test@test.com && git config user.name Test", {
+        cwd: repoDir,
+      });
       writeFileSync(`${repoDir}/test.txt`, "hello");
       execSync("git add . && git commit -m 'init'", { cwd: repoDir });
 

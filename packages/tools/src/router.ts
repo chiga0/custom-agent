@@ -95,8 +95,16 @@ export class ToolRouter {
     return this.tools.has(name);
   }
 
-  list(): readonly { readonly name: string; readonly risk: string; readonly description?: string }[] {
-    return Array.from(this.tools.values()).map((t) => ({ name: t.name, risk: t.risk, description: t.description }));
+  list(): readonly {
+    readonly name: string;
+    readonly risk: string;
+    readonly description?: string;
+  }[] {
+    return Array.from(this.tools.values()).map((t) => ({
+      name: t.name,
+      risk: t.risk,
+      description: t.description,
+    }));
   }
 
   /**

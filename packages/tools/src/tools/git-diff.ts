@@ -42,7 +42,11 @@ export const gitDiffTool: Tool<GitDiffArgs> = {
         if (code === 0 || code === 1) {
           resolve({ status: "ok" });
         } else {
-          resolve({ status: "failed", errorCode: "unknown", message: `git diff exited with code ${code}` });
+          resolve({
+            status: "failed",
+            errorCode: "unknown",
+            message: `git diff exited with code ${code}`,
+          });
         }
       });
 

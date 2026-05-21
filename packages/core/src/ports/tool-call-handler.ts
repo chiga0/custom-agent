@@ -1,16 +1,18 @@
 import type { AgentEvent } from "@custom-agent/schema";
 
 // Narrow commit callback — no AgentEvent envelope fields needed at call site.
-export type ToolEventCommit = (
-  partial: Pick<AgentEvent, "type" | "payload">,
-) => Promise<void>;
+export type ToolEventCommit = (partial: Pick<AgentEvent, "type" | "payload">) => Promise<void>;
 
 // Per-turn handler created by the factory.
 export type ToolCallHandler = {
   /**
    * List tools available to the model (used to populate ModelRequest.tools).
    */
-  listTools(): readonly { readonly name: string; readonly description: string; readonly risk: string }[];
+  listTools(): readonly {
+    readonly name: string;
+    readonly description: string;
+    readonly risk: string;
+  }[];
   /**
    * Dispatch one tool call. Emits tool lifecycle events via the commit
    * callback injected at construction. Returns the result text to feed
