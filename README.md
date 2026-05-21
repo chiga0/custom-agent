@@ -1,5 +1,6 @@
 # Custom Agent
 
+
 Custom Agent is a local-first AI coding agent project. The core idea is to build an event-sourced agent engine that can be reused by Web, CLI, ACP, IDE, and channel clients without mixing UI, provider, tool, memory, or protocol concerns.
 
 ## Project Mainline
