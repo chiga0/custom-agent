@@ -34,17 +34,32 @@ export function mapEventToUpdate(event: AgentEvent): SessionUpdate | null {
     case "session.created":
     case "turn.started":
     case "turn.completed":
+      return null;
+    case "tool.started":
+      return {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: `\n[tool: ${event.payload.toolName}]\n` },
+      };
+    case "tool.delta":
+      return {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: event.payload.text },
+      };
+    case "tool.completed":
+      return {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: `\n[tool done: ${event.payload.toolName}]\n` },
+      };
+    case "tool.failed":
+      return {
+        sessionUpdate: "agent_message_chunk",
+        content: {
+          type: "text",
+          text: `\n[tool failed: ${event.payload.toolName}: ${event.payload.message}]\n`,
+        },
+      };
     case "tool.permission_requested":
     case "tool.permission_resolved":
-    case "tool.started":
-    case "tool.delta":
-    case "tool.completed":
-    case "tool.failed":
-      // Tool events are audit-only in M3-02; the ACP wire surface for
-      // tool calls (session/update tool_call / tool_call_update) is
-      // M3-02b's responsibility when the SessionEngine actually drives
-      // tool calls from the model loop. Today's transcript only shows
-      // user / agent text chunks.
       return null;
     case "user.message":
       return {

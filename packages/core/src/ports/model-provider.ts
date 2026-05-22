@@ -2,6 +2,8 @@
 // adapters (fake / real provider) implement this contract; Core MUST NOT
 // import provider SDKs directly.
 
+import type { ToolRisk } from "@custom-agent/schema";
+
 export type ModelCapabilities = {
   readonly streaming: boolean;
   readonly toolCall: boolean;
@@ -13,11 +15,20 @@ export type ModelCapabilities = {
 export type ModelMessage = {
   readonly role: "system" | "user" | "assistant" | "tool";
   readonly content: string;
+  readonly toolCallId?: string;
+  readonly toolName?: string;
+};
+
+export type ModelToolDefinition = {
+  readonly name: string;
+  readonly description: string;
+  readonly risk: ToolRisk;
 };
 
 export type ModelRequest = {
   readonly modelId: string;
   readonly messages: readonly ModelMessage[];
+  readonly tools?: readonly ModelToolDefinition[];
   readonly metadata?: Record<string, unknown>;
 };
 
@@ -28,6 +39,12 @@ export type ModelUsage = {
 
 export type ModelStreamEvent =
   | { readonly type: "text_delta"; readonly delta: string }
+  | {
+      readonly type: "tool_call_request";
+      readonly toolCallId: string;
+      readonly toolName: string;
+      readonly toolArgs: unknown;
+    }
   | { readonly type: "completed"; readonly usage?: ModelUsage }
   | { readonly type: "failed"; readonly reason: string };
 

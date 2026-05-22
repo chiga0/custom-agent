@@ -17,6 +17,18 @@ export {
   type FakeStreamingProviderOptions,
 } from "./providers/fake-provider";
 
+export {
+  FakeToolCallProvider,
+  type FakeToolCallProviderOptions,
+  type FakeToolCallSequence,
+} from "./providers/fake-tool-provider";
+
+export type {
+  ToolCallHandler,
+  ToolCallHandlerFactory,
+  ToolEventCommit,
+} from "./ports/tool-call-handler";
+
 // NOTE: JsonlFileEventStore intentionally NOT re-exported from this barrel.
 // It is a storage-coupled adapter; importing it eagerly through the core
 // barrel would pull @custom-agent/storage into every consumer of pure core

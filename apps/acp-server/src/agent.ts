@@ -24,7 +24,15 @@ import {
   SessionEngine,
   type EventStore,
   type ModelProvider,
+  type ToolCallHandlerFactory,
 } from "@custom-agent/core";
+import { PermissionEngine, DEFAULT_POLICY, type ApprovalSource } from "@custom-agent/permissions";
+import {
+  ToolRouter,
+  ALL_TOOLS,
+  type ToolEventInput,
+  type ToolEventSink,
+} from "@custom-agent/tools";
 import { mapEventToUpdate } from "./event-mapper";
 import { JsonlSessionStore } from "./jsonl-store";
 
@@ -62,6 +70,7 @@ export type CustomAgentOptions = {
   readonly provider?: ModelProvider;
   readonly now?: () => Date;
   readonly createId?: (prefix: string) => string;
+  readonly approvalSource?: ApprovalSource;
 };
 
 export class CustomAgent implements Agent {
@@ -83,11 +92,74 @@ export class CustomAgent implements Agent {
       options.eventStore ?? new JsonlSessionStore(resolveEventLogRoot(options.eventLogRoot));
     const provider = options.provider ?? new FakeStreamingProvider();
 
+    const approvalSource: ApprovalSource =
+      options.approvalSource ??
+      (async (_request, _signal) => ({
+        outcome: "allowed" as const,
+        reason: "auto-approved (M3 default)",
+      }));
+
+    const makeToolHandler: ToolCallHandlerFactory = (commitEvent, cwd, signal) => {
+      const collected: string[] = [];
+
+      const toolEventSink: ToolEventSink = {
+        async emit(event: ToolEventInput) {
+          if (event.type === "tool.delta") {
+            collected.push(event.payload.text);
+          }
+          await commitEvent(event as Parameters<typeof commitEvent>[0]);
+        },
+      };
+
+      const permEventSink = {
+        async emit(event: Parameters<typeof commitEvent>[0]) {
+          await commitEvent(event);
+        },
+      };
+
+      const permEngine = new PermissionEngine({
+        policy: DEFAULT_POLICY,
+        approvalSource,
+        eventSink: permEventSink,
+      });
+
+      const router = new ToolRouter({
+        tools: ALL_TOOLS,
+        permissionEngine: permEngine,
+        toolEventSink,
+        cwd,
+      });
+
+      return {
+        listTools() {
+          return router.list().map((t) => ({
+            name: t.name,
+            description: t.description ?? t.name,
+            risk: t.risk,
+          }));
+        },
+        async handle(_toolCallId: string, toolName: string, toolArgs: unknown): Promise<string> {
+          collected.length = 0;
+          await router.dispatch(
+            {
+              toolName,
+              args: toolArgs,
+              reason: "model-requested tool call",
+              argsPreview: JSON.stringify(toolArgs).slice(0, 200),
+            },
+            signal,
+          );
+          return collected.join("") || "(no output)";
+        },
+      };
+    };
+
     this.engine = new SessionEngine({
       eventStore: this.store,
       provider,
       now: options.now,
       createId: options.createId,
+      makeToolHandler,
     });
   }
 
