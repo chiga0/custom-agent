@@ -171,6 +171,57 @@ describe("daemon HTTP server", () => {
     expect(await res.text()).toBe("ok");
   });
 
+  it("answers browser CORS preflight for /rpc without auth", async () => {
+    h = await startHarness({ childFactory: () => new FakeChild({ sessionId: "s_1" }) });
+    const res = await fetch(`${h.baseUrl}/rpc`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: "http://127.0.0.1:5173",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization, content-type, x-acp-session-id",
+      },
+    });
+    expect(res.status).toBe(204);
+    expect(res.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:5173");
+    expect(res.headers.get("access-control-allow-methods")).toContain("POST");
+    expect(res.headers.get("access-control-allow-headers")).toContain("Authorization");
+    expect(res.headers.get("access-control-allow-headers")).toContain("X-ACP-Session-Id");
+  });
+
+  it("adds CORS headers to authenticated RPC responses for local web clients", async () => {
+    h = await startHarness({ childFactory: () => new FakeChild({ sessionId: "sess_CORS" }) });
+    const res = await fetch(`${h.baseUrl}/rpc`, {
+      method: "POST",
+      headers: {
+        ...authHeaders(h.token),
+        Origin: "http://localhost:5173",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "session/new",
+        params: { cwd: "/tmp", mcpServers: [] },
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("access-control-allow-origin")).toBe("http://localhost:5173");
+    expect(res.headers.get("vary")).toContain("Origin");
+  });
+
+  it("rejects non-loopback browser origins before auth or session mutation", async () => {
+    h = await startHarness({ childFactory: () => new FakeChild({ sessionId: "sess_BLOCKED" }) });
+    const res = await fetch(`${h.baseUrl}/rpc`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://example.com",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization, content-type",
+      },
+    });
+    expect(res.status).toBe(403);
+    expect(h.pendingChildren).toHaveLength(0);
+  });
+
   it("daemon-level initialize answers without spawning a child", async () => {
     h = await startHarness({ childFactory: () => new FakeChild({ sessionId: "s_1" }) });
     const res = await fetch(`${h.baseUrl}/rpc`, {

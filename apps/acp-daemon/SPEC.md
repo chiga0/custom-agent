@@ -68,6 +68,26 @@ Failure modes:
 (systemd, k8s liveness, local launcher) can probe the daemon without a
 token.
 
+### Browser CORS
+
+The daemon is local-first, but the Web client usually runs from a different
+loopback origin (for example `http://127.0.0.1:5173`). Browsers therefore
+preflight `/rpc` and `/events` because requests carry `Authorization` and
+session-routing headers.
+
+For loopback browser origins only (`localhost`, `127.0.0.0/8`, `::1`) and
+`Origin: null` local-file contexts, the daemon:
+
+- Responds to unauthenticated `OPTIONS /rpc`, `OPTIONS /events`, and
+  `OPTIONS /healthz` with `204 No Content`.
+- Allows `GET`, `POST`, and `OPTIONS`.
+- Allows `Authorization`, `Content-Type`, `X-ACP-Session-Id`, and
+  `Last-Event-ID`.
+- Reflects the allowed origin and sets `Vary: Origin`.
+
+Non-loopback browser origins are rejected with `403 Forbidden` before auth
+or session mutation. Non-browser clients that omit `Origin` are unaffected.
+
 ## 4. JSON-RPC Envelope
 
 The body of `POST /rpc` is a single JSON-RPC 2.0 message:
