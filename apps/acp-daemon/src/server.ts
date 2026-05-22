@@ -19,6 +19,9 @@ import type { JsonRpcMessage } from "./child";
 const SESSION_HEADER = "x-acp-session-id";
 const LAST_EVENT_HEADER = "last-event-id";
 const SSE_KEEPALIVE_MS = 15_000;
+const CORS_ALLOW_METHODS = "GET, POST, OPTIONS";
+const CORS_ALLOW_HEADERS = "Authorization, Content-Type, X-ACP-Session-Id, Last-Event-ID";
+const CORS_MAX_AGE_SECONDS = "600";
 
 // Session ids are used as filesystem path components (the writer's
 // JSONL is at `${ACP_EVENT_LOG_ROOT}/${sessionId}.jsonl`) AND as HTTP
@@ -108,6 +111,22 @@ async function handleRequest(
   auth: Authenticator,
 ): Promise<void> {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+  const cors = applyCorsHeaders(req, res);
+
+  if (cors === "blocked") {
+    respondJson(res, 403, { error: "origin not allowed" });
+    return;
+  }
+
+  if (req.method === "OPTIONS") {
+    if (url.pathname === "/rpc" || url.pathname === "/events" || url.pathname === "/healthz") {
+      res.statusCode = 204;
+      res.end();
+      return;
+    }
+    respondJson(res, 404, { error: "not found" });
+    return;
+  }
 
   if (url.pathname === "/healthz" && req.method === "GET") {
     res.statusCode = 200;
@@ -441,6 +460,54 @@ function respondJson(res: ServerResponse, status: number, body: unknown): void {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json");
   res.end(JSON.stringify(body));
+}
+
+function applyCorsHeaders(
+  req: IncomingMessage,
+  res: ServerResponse,
+): "absent" | "allowed" | "blocked" {
+  const origin = req.headers.origin;
+  if (!origin) return "absent";
+  const allowedOrigin = resolveCorsOrigin(origin);
+  if (!allowedOrigin) return "blocked";
+  res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+  res.setHeader("Access-Control-Allow-Methods", CORS_ALLOW_METHODS);
+  res.setHeader("Access-Control-Allow-Headers", CORS_ALLOW_HEADERS);
+  res.setHeader("Access-Control-Max-Age", CORS_MAX_AGE_SECONDS);
+  res.setHeader("Access-Control-Expose-Headers", "Content-Type");
+  appendVary(res, "Origin");
+  return "allowed";
+}
+
+function resolveCorsOrigin(origin: string): string | null {
+  if (origin === "null") return "null";
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  const host = url.hostname.toLowerCase();
+  if (host === "localhost" || host === "::1" || host === "[::1]") return origin;
+  if (host === "127.0.0.1" || host.startsWith("127.")) return origin;
+  return null;
+}
+
+function appendVary(res: ServerResponse, value: string): void {
+  const current = res.getHeader("Vary");
+  if (!current) {
+    res.setHeader("Vary", value);
+    return;
+  }
+  const values = Array.isArray(current) ? current.join(", ") : String(current);
+  const hasValue = values
+    .split(",")
+    .map((part) => part.trim().toLowerCase())
+    .includes(value.toLowerCase());
+  if (!hasValue) {
+    res.setHeader("Vary", `${values}, ${value}`);
+  }
 }
 
 function respondJsonRpc(
