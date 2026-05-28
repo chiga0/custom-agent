@@ -106,6 +106,37 @@ describe("SessionEngine + RecordedProvider (integration)", () => {
     expect(payload.errorCode).toBe("provider_failure");
   });
 
+  it("recorded tool_call_request without handler breaks loop cleanly", async () => {
+    const { engine } = makeEngine({
+      tokenEstimate: 10,
+      maxContextTokens: 1000,
+      capabilities: { toolCall: true },
+      events: [
+        { kind: "text_delta", delta: "Checking." },
+        {
+          kind: "tool_call_request",
+          toolCallId: "call_1",
+          toolName: "echo_tool",
+          toolArgs: { text: "hello" },
+        },
+        { kind: "completed", usage: { promptTokens: 8, completionTokens: 5 } },
+      ],
+    });
+    const session = await engine.createSession({ cwd: "/tmp", client: "test" });
+    const events = await collect(
+      engine.runTurn({ sessionId: session.sessionId, userMessage: "echo hello" }),
+    );
+
+    const types = events.map((e) => e.type);
+    expect(types).toContain("turn.started");
+    expect(types).toContain("user.message");
+    expect(types).toContain("model.delta");
+    expect(types).toContain("turn.completed");
+
+    const completed = events.at(-1)?.payload as { stopReason: string };
+    expect(completed.stopReason).toBe("final");
+  });
+
   it("recorded mid-stream context_overflow throw maps to errorCode=context_overflow", async () => {
     const { engine } = makeEngine({
       tokenEstimate: 5,

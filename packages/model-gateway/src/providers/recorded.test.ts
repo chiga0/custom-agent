@@ -107,6 +107,71 @@ describe("RecordedProvider — happy fixtures", () => {
   });
 });
 
+describe("RecordedProvider — tool_call_request replay", () => {
+  it("yields tool_call_request events from the fixture", async () => {
+    const fixture: ProviderFixture = {
+      tokenEstimate: 10,
+      maxContextTokens: 1000,
+      capabilities: { toolCall: true },
+      events: [
+        { kind: "text_delta", delta: "Let me check." },
+        {
+          kind: "tool_call_request",
+          toolCallId: "call_1",
+          toolName: "read_file",
+          toolArgs: { path: "/tmp/test.txt" },
+        },
+        { kind: "completed", usage: { promptTokens: 8, completionTokens: 5 } },
+      ],
+    };
+    const provider = new RecordedProvider({ fixture });
+    expect(provider.capabilities.toolCall).toBe(true);
+    const events = await collectStream(
+      provider.stream(request("read the file"), new AbortController().signal),
+    );
+    expect(events).toEqual([
+      { type: "text_delta", delta: "Let me check." },
+      {
+        type: "tool_call_request",
+        toolCallId: "call_1",
+        toolName: "read_file",
+        toolArgs: { path: "/tmp/test.txt" },
+      },
+      { type: "completed", usage: { promptTokens: 8, completionTokens: 5 } },
+    ]);
+  });
+
+  it("yields multiple tool_call_request events for parallel tool calls", async () => {
+    const fixture: ProviderFixture = {
+      tokenEstimate: 10,
+      maxContextTokens: 1000,
+      events: [
+        {
+          kind: "tool_call_request",
+          toolCallId: "call_1",
+          toolName: "read_file",
+          toolArgs: { path: "a.ts" },
+        },
+        {
+          kind: "tool_call_request",
+          toolCallId: "call_2",
+          toolName: "list_files",
+          toolArgs: { directory: "." },
+        },
+        { kind: "completed" },
+      ],
+    };
+    const provider = new RecordedProvider({ fixture });
+    const events = await collectStream(
+      provider.stream(request("list and read"), new AbortController().signal),
+    );
+    expect(events).toHaveLength(3);
+    expect(events[0]).toMatchObject({ type: "tool_call_request", toolCallId: "call_1" });
+    expect(events[1]).toMatchObject({ type: "tool_call_request", toolCallId: "call_2" });
+    expect(events[2]).toMatchObject({ type: "completed" });
+  });
+});
+
 describe("RecordedProvider — error injection (M2-02b reference shape)", () => {
   it("throws ProviderRateLimit after the configured failBefore", async () => {
     const fixture: ProviderFixture = {

@@ -8,6 +8,7 @@
     "./providers/recorded": "./src/providers/recorded.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
     "@custom-agent/core": "0.1.0",
     "@custom-agent/schema": "0.1.0"
   }

@@ -12,6 +12,7 @@ export type ToolCallHandler = {
     readonly name: string;
     readonly description: string;
     readonly risk: string;
+    readonly inputSchema?: Record<string, unknown>;
   }[];
   /**
    * Dispatch one tool call. Emits tool lifecycle events via the commit

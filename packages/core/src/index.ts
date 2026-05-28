@@ -42,6 +42,7 @@ export type {
   ModelProvider,
   ModelRequest,
   ModelStreamEvent,
+  ModelToolDefinition,
   ModelUsage,
   PreflightResult,
 } from "./ports/model-provider";

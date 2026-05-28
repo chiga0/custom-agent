@@ -43,6 +43,12 @@ import {
 export type RecordedProviderEvent =
   | { readonly kind: "text_delta"; readonly delta: string }
   | {
+      readonly kind: "tool_call_request";
+      readonly toolCallId: string;
+      readonly toolName: string;
+      readonly toolArgs: unknown;
+    }
+  | {
       readonly kind: "completed";
       readonly usage?: { promptTokens: number; completionTokens: number };
     }
@@ -141,6 +147,14 @@ export class RecordedProvider implements ModelProvider {
           }
           break;
         }
+        case "tool_call_request":
+          yield {
+            type: "tool_call_request",
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            toolArgs: event.toolArgs,
+          };
+          break;
         case "completed":
           yield { type: "completed", usage: event.usage };
           return;

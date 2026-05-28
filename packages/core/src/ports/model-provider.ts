@@ -23,6 +23,7 @@ export type ModelToolDefinition = {
   readonly name: string;
   readonly description: string;
   readonly risk: ToolRisk;
+  readonly inputSchema?: Record<string, unknown>;
 };
 
 export type ModelRequest = {

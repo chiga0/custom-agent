@@ -30,3 +30,5 @@ export {
   type RecordedProviderError,
   type RecordedProviderOptions,
 } from "./providers/recorded";
+
+export { AnthropicProvider, type AnthropicProviderOptions } from "./providers/anthropic";
