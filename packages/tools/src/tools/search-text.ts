@@ -1,5 +1,6 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
+import { createIgnoreFilter } from "../gitignore";
 import { resolveInsideCwd } from "../path-safety";
 import type { Tool, ToolContext, ToolOutcome } from "../tool";
 
@@ -13,17 +14,6 @@ export type SearchTextArgs = {
   /** Stop after N matches. Default 200. */
   readonly maxMatches?: number;
 };
-
-const DEFAULT_SKIP_DIRS = new Set([
-  "node_modules",
-  ".git",
-  "dist",
-  "build",
-  "coverage",
-  ".next",
-  ".turbo",
-  ".vite",
-]);
 
 const TEXT_FILE_EXTS = new Set([
   ".ts",
@@ -99,6 +89,7 @@ export const searchTextTool: Tool<SearchTextArgs> = {
     const max = args.maxMatches ?? 200;
     let matches = 0;
     const hits: string[] = [];
+    const isIgnored = await createIgnoreFilter(ctx.cwd);
 
     const search = async (filePath: string): Promise<boolean> => {
       let content: string;
@@ -128,11 +119,14 @@ export const searchTextTool: Tool<SearchTextArgs> = {
         if (ctx.signal.aborted) return false;
         if (entry.name.startsWith(".")) continue;
         const abs = join(dir, entry.name);
+        const rel = relative(ctx.cwd, abs);
         if (entry.isDirectory()) {
-          if (DEFAULT_SKIP_DIRS.has(entry.name)) continue;
+          if (isIgnored(`${rel}/`)) continue;
           if (depth >= 32) continue;
           if (!(await walk(abs, depth + 1))) return false;
-        } else if (entry.isFile() && looksTextual(entry.name)) {
+        } else if (entry.isFile()) {
+          if (isIgnored(rel)) continue;
+          if (!looksTextual(entry.name)) continue;
           if (!(await search(abs))) return false;
         }
       }

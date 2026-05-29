@@ -70,6 +70,7 @@ export type TurnCompletedEvent = EventEnvelope<
   {
     stopReason: "final" | "cancelled" | "error";
     errorCode?: TurnErrorCode;
+    usage?: { promptTokens: number; completionTokens: number };
   }
 >;
 

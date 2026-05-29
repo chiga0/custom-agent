@@ -228,6 +228,8 @@ export class SessionEngine {
       const availableTools = toolHandler?.listTools() ?? [];
 
       let messages: ModelMessage[] = [{ role: "user" as const, content: input.userMessage }];
+      let totalPromptTokens = 0;
+      let totalCompletionTokens = 0;
 
       toolLoop: while (true) {
         const request = {
@@ -264,7 +266,10 @@ export class SessionEngine {
               }
               break toolLoop;
             }
-            // "completed" just ends the inner for-await
+            if (chunk.type === "completed" && chunk.usage) {
+              totalPromptTokens += chunk.usage.promptTokens;
+              totalCompletionTokens += chunk.usage.completionTokens;
+            }
           }
         } catch (error) {
           if (error instanceof EventStoreFailure) {
@@ -316,7 +321,11 @@ export class SessionEngine {
       }
 
       fsm.transition(stopReasonToState(stopReason), `turn.completed (stopReason=${stopReason})`);
-      yield await this.emitTurnCompleted(state, turnId, stopReason, errorCode);
+      const usage =
+        totalPromptTokens > 0 || totalCompletionTokens > 0
+          ? { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens }
+          : undefined;
+      yield await this.emitTurnCompleted(state, turnId, stopReason, errorCode, usage);
     } finally {
       state.currentTurn = undefined;
     }
@@ -389,12 +398,12 @@ export class SessionEngine {
     turnId: string,
     stopReason: StopReason,
     errorCode?: TurnErrorCode,
+    usage?: { promptTokens: number; completionTokens: number },
   ): Promise<AgentEvent> {
-    // Only attach errorCode when stopReason is "error"; payload stays
-    // backward-compatible for the M1 fixtures (final / cancelled paths
-    // never had this field).
     const payload =
-      stopReason === "error" && errorCode ? { stopReason, errorCode } : { stopReason };
+      stopReason === "error" && errorCode
+        ? { stopReason, errorCode, ...(usage && { usage }) }
+        : { stopReason, ...(usage && { usage }) };
     return this.commitEvent(state, {
       turnId,
       type: "turn.completed",
