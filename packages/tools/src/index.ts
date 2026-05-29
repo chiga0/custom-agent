@@ -26,6 +26,7 @@ export {
 
 export { BudgetAccumulator, DEFAULT_OUTPUT_BUDGET_BYTES } from "./budget";
 export { resolveInsideCwd } from "./path-safety";
+export { createIgnoreFilter } from "./gitignore";
 
 export { readFileTool, type ReadFileArgs } from "./tools/read-file";
 export { listFilesTool, type ListFilesArgs } from "./tools/list-files";

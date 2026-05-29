@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@custom-agent/schema": "0.1.0",
-    "@custom-agent/permissions": "0.1.0"
+    "@custom-agent/permissions": "0.1.0",
+    "ignore": "^7.0.0"
   }
 }

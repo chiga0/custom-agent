@@ -295,6 +295,7 @@ export class CustomAgent implements Agent {
     }
 
     let coreStopReason: "final" | "cancelled" | "error" = "final";
+    let turnUsage: { promptTokens: number; completionTokens: number } | undefined;
     try {
       for await (const event of this.engine.runTurn({
         sessionId: this.sessionId,
@@ -309,6 +310,7 @@ export class CustomAgent implements Agent {
         }
         if (event.type === "turn.completed") {
           coreStopReason = event.payload.stopReason;
+          turnUsage = event.payload.usage;
         }
       }
     } catch (error) {
@@ -321,7 +323,15 @@ export class CustomAgent implements Agent {
       throw error;
     }
 
-    return { stopReason: mapStopReason(coreStopReason) };
+    const response: PromptResponse = { stopReason: mapStopReason(coreStopReason) };
+    if (turnUsage) {
+      response.usage = {
+        inputTokens: turnUsage.promptTokens,
+        outputTokens: turnUsage.completionTokens,
+        totalTokens: turnUsage.promptTokens + turnUsage.completionTokens,
+      };
+    }
+    return response;
   }
 
   async cancel(params: CancelNotification): Promise<void> {

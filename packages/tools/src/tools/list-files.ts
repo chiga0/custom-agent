@@ -1,5 +1,6 @@
 import { readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
+import { createIgnoreFilter } from "../gitignore";
 import { resolveInsideCwd } from "../path-safety";
 import type { Tool, ToolContext, ToolOutcome } from "../tool";
 
@@ -11,29 +12,6 @@ export type ListFilesArgs = {
   /** Skip hidden dotfiles. Default true. */
   readonly skipHidden?: boolean;
 };
-
-const DEFAULT_SKIP_DIRS = new Set([
-  "node_modules",
-  ".git",
-  "dist",
-  "build",
-  "coverage",
-  ".next",
-  ".turbo",
-  ".vite",
-]);
-
-/**
- * `list_files` — enumerate directory entries under cwd. Returns one
- * relative path per line, sorted within each directory. Skips a known
- * set of large build artefacts (`node_modules`, `.git`, `dist`, ...)
- * even when `recursive=true` so the model doesn't drown in noise.
- *
- * Gitignore parsing is intentionally OUT OF SCOPE for M3-02; the
- * skip list approximates the dominant cases (node_modules etc.). A
- * real .gitignore-respecting traversal lands with M3-02b alongside
- * the SessionEngine wiring (where we'll add an `ignore`-style dep).
- */
 export const listFilesTool: Tool<ListFilesArgs> = {
   name: "list_files",
   risk: "read",
@@ -71,6 +49,7 @@ export const listFilesTool: Tool<ListFilesArgs> = {
 
     const lines: string[] = [];
     const skipHidden = args.skipHidden ?? true;
+    const isIgnored = await createIgnoreFilter(ctx.cwd);
     const walk = async (dir: string, depth: number): Promise<void> => {
       if (ctx.signal.aborted) return;
       const entries = await readdir(dir, { withFileTypes: true });
@@ -78,9 +57,9 @@ export const listFilesTool: Tool<ListFilesArgs> = {
       for (const entry of entries) {
         if (ctx.signal.aborted) return;
         if (skipHidden && entry.name.startsWith(".")) continue;
-        if (entry.isDirectory() && DEFAULT_SKIP_DIRS.has(entry.name)) continue;
         const abs = join(dir, entry.name);
         const rel = relative(ctx.cwd, abs);
+        if (isIgnored(entry.isDirectory() ? `${rel}/` : rel)) continue;
         lines.push(entry.isDirectory() ? `${rel}/` : rel);
         if (args.recursive && entry.isDirectory() && depth < 16) {
           await walk(abs, depth + 1);

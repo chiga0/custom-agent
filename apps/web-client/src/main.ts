@@ -7,7 +7,12 @@ import {
   type DaemonConfig,
   type StreamEvent,
 } from "./daemon-client";
-import { EMPTY_TRANSCRIPT, applySessionUpdate, type TranscriptState } from "./transcript";
+import {
+  EMPTY_TRANSCRIPT,
+  applySessionUpdate,
+  type TranscriptState,
+  type TranscriptTurn,
+} from "./transcript";
 import "./styles.css";
 
 // main.ts
@@ -37,21 +42,75 @@ const state: UiState = {
 
 // ---- pure render helpers (exported for tests) ----
 
-/**
- * Build a transcript HTML fragment string. Pure function over the
- * TranscriptState — kept exported because the existing main.test.ts
- * (now replaced by transcript.test.ts) relied on a pure render helper.
- */
 export function renderTranscriptHtml(transcript: TranscriptState): string {
   if (transcript.turns.length === 0) {
     return `<p class="empty">No turns yet. Start a new session or load an existing one.</p>`;
   }
-  return transcript.turns
-    .map(
-      (turn) =>
-        `<article class="turn turn--${turn.role}"><h3>${turn.role}</h3><p>${escapeHtml(turn.text)}</p></article>`,
-    )
-    .join("");
+  return transcript.turns.map((turn) => renderTurn(turn)).join("");
+}
+
+function renderTurn(turn: TranscriptTurn): string {
+  if (turn.role === "tool" && turn.toolCall) {
+    return renderToolCard(turn);
+  }
+  return `<article class="turn turn--${turn.role}"><h3>${turn.role}</h3><p>${escapeHtml(turn.text)}</p></article>`;
+}
+
+function renderToolCard(turn: TranscriptTurn): string {
+  const tc = turn.toolCall!;
+  const badge = `<span class="tool-badge tool-badge--${tc.status}">${tc.status}</span>`;
+  const header = `<div class="tool-header"><span class="tool-kind">${escapeHtml(tc.kind)}</span><strong>${escapeHtml(tc.title)}</strong>${badge}</div>`;
+
+  let body = "";
+  if (tc.input) {
+    body += `<pre class="tool-input"><code>${escapeHtml(tc.input)}</code></pre>`;
+  }
+  if (tc.output) {
+    body += renderToolOutput(tc.output);
+  }
+  if (tc.errorMessage) {
+    body += `<p class="tool-error">${escapeHtml(tc.errorMessage)}</p>`;
+  }
+
+  let audit = "";
+  if (tc.risk || tc.outcome) {
+    const parts: string[] = [];
+    if (tc.risk) parts.push(`risk=${tc.risk}`);
+    if (tc.decision) parts.push(`decision=${tc.decision}`);
+    if (tc.outcome) parts.push(`outcome=${tc.outcome}`);
+    if (tc.outcomeSource) parts.push(`source=${tc.outcomeSource}`);
+    audit = `<p class="tool-audit">${escapeHtml(parts.join(" · "))}</p>`;
+  }
+
+  return `<article class="turn turn--tool"><div class="tool-card">${header}${body}${audit}</div></article>`;
+}
+
+export function renderToolOutput(output: string): string {
+  if (looksLikeDiff(output)) {
+    return renderDiffBlock(output);
+  }
+  return `<pre class="tool-output"><code>${escapeHtml(output)}</code></pre>`;
+}
+
+export function looksLikeDiff(text: string): boolean {
+  return /^diff --git /m.test(text) || (/^--- /m.test(text) && /^\+\+\+ /m.test(text));
+}
+
+export function renderDiffBlock(diff: string): string {
+  const lines = diff.split("\n").map((line) => {
+    const escaped = escapeHtml(line);
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      return `<span class="diff-add">${escaped}</span>`;
+    }
+    if (line.startsWith("-") && !line.startsWith("---")) {
+      return `<span class="diff-del">${escaped}</span>`;
+    }
+    if (line.startsWith("@@")) {
+      return `<span class="diff-hunk">${escaped}</span>`;
+    }
+    return `<span class="diff-ctx">${escaped}</span>`;
+  });
+  return `<pre class="tool-output tool-output--diff"><code>${lines.join("\n")}</code></pre>`;
 }
 
 function escapeHtml(text: string): string {
@@ -80,6 +139,18 @@ function setStatus(msg: string): void {
 function rerenderTranscript(): void {
   const el = document.querySelector<HTMLElement>("#transcript");
   if (el) el.innerHTML = renderTranscriptHtml(state.transcript);
+  rerenderUsage();
+}
+
+function rerenderUsage(): void {
+  const el = document.querySelector<HTMLElement>("#usage");
+  if (!el) return;
+  const u = state.transcript.usage;
+  if (!u || u.used === 0) {
+    el.textContent = "";
+    return;
+  }
+  el.textContent = `${u.used.toLocaleString()} tokens used`;
 }
 
 function rerenderSession(): void {
@@ -257,7 +328,10 @@ function render(): void {
         </div>
       </section>
 
-      <footer><p id="status" class="status">idle</p></footer>
+      <footer>
+        <p id="status" class="status">idle</p>
+        <p id="usage" class="usage"></p>
+      </footer>
     </section>
   `;
 
