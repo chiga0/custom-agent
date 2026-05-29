@@ -29,5 +29,5 @@ export async function createIgnoreFilter(cwd: string): Promise<(relativePath: st
   } catch {
     // No .gitignore or unreadable — rely on builtins only.
   }
-  return (relPath: string) => ig.ignores(relPath);
+  return (relPath: string) => relPath !== "" && ig.ignores(relPath);
 }

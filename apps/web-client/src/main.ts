@@ -58,7 +58,7 @@ function renderTurn(turn: TranscriptTurn): string {
 
 function renderToolCard(turn: TranscriptTurn): string {
   const tc = turn.toolCall!;
-  const badge = `<span class="tool-badge tool-badge--${tc.status}">${tc.status}</span>`;
+  const badge = `<span class="tool-badge tool-badge--${escapeHtml(tc.status)}">${escapeHtml(tc.status)}</span>`;
   const header = `<div class="tool-header"><span class="tool-kind">${escapeHtml(tc.kind)}</span><strong>${escapeHtml(tc.title)}</strong>${badge}</div>`;
 
   let body = "";
